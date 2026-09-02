@@ -497,7 +497,8 @@ const App = (() => {
         <a href="#" class="nav-item" data-view="superadmin">${icon('routine')}<span>Entrenadores</span></a>`;
     } else if (usuario.rol === 'entrenador') {
       nav.innerHTML = `
-        <a href="#" class="nav-item" data-view="alumnos">${icon('routine')}<span>Mis alumnos</span></a>`;
+        <a href="#" class="nav-item" data-view="alumnos">${icon('routine')}<span>Mis alumnos</span></a>
+        <a href="#" class="nav-item" data-view="recepcion">${icon('search')}<span>Recepción</span></a>`;
     } else {
       nav.innerHTML = `
         <a href="#" class="nav-item" data-view="inicio">${icon('trophy')}<span>Inicio</span></a>
@@ -713,6 +714,181 @@ const App = (() => {
     }));
   }
   RENDERERS['alumnos'] = renderAlumnos;
+
+  // ---------------------------------------------------------------------
+  // Vista: Recepción (gimnasio) — socios sin login, identificados por DNI.
+  // Pensado para el modelo "control de acceso en la puerta": buscar por
+  // DNI, dar de alta si no existe, marcar asistencia, ver estado de pago.
+  // ---------------------------------------------------------------------
+  const MODALIDADES_GYM = { musculacion: 'Musculación', pilates: 'Pilates', ambas: 'Musculación + Pilates' };
+
+  async function renderRecepcion() {
+    const cont = $('#view-recepcion');
+    cont.innerHTML = `
+      <div class="panel-header"><h2>${icon('search')} Recepción</h2></div>
+      <div class="panel" style="margin-bottom:1.2rem">
+        <div class="campo-fila">
+          <label class="campo" style="flex:1"><span>Buscar socio por DNI</span><input type="text" id="input-buscar-dni" inputmode="numeric" placeholder="Ej: 30123456" autofocus></label>
+          <button class="btn btn-primario" id="btn-buscar-dni" style="align-self:flex-end">${icon('search')} Buscar</button>
+        </div>
+      </div>
+      <div id="resultado-busqueda-dni"></div>
+      <div class="panel-header" style="margin-top:2rem"><h3>Socios de hoy</h3></div>
+      <div id="lista-asistencias-hoy"><p class="texto-suave">Cargando...</p></div>
+      <div class="panel-header-flex" style="margin-top:2rem">
+        <h3>Todos los socios</h3>
+        <button class="btn btn-fantasma btn-sm" id="btn-ver-todos-socios">${icon('routine')} Ver listado completo</button>
+      </div>
+      <div id="lista-todos-socios"></div>
+    `;
+
+    const inputDni = $('#input-buscar-dni');
+    const resultadoCont = $('#resultado-busqueda-dni');
+
+    async function buscar() {
+      const dni = inputDni.value.trim();
+      if (!dni) return;
+      resultadoCont.innerHTML = `<p class="texto-suave">Buscando...</p>`;
+      const miembro = await FirebaseService.buscarMiembroPorDni(dni);
+      if (miembro) {
+        await pintarMiembroEncontrado(miembro);
+      } else {
+        resultadoCont.innerHTML = `
+          <div class="tarjeta-objetivo">
+            <p class="texto-suave">${icon('warning')} No hay ningún socio registrado con el DNI <strong>${escapeHtml(dni)}</strong>.</p>
+            <button class="btn btn-primario" id="btn-dar-alta-nuevo" style="margin-top:.8rem">${icon('plus')} Registrar socio nuevo</button>
+          </div>`;
+        $('#btn-dar-alta-nuevo').addEventListener('click', () => abrirModalNuevoSocio(dni, buscar));
+      }
+    }
+
+    async function pintarMiembroEncontrado(miembro) {
+      const yaAsistio = await FirebaseService.yaAsistioHoy(miembro.dni);
+      resultadoCont.innerHTML = `
+        <div class="tarjeta-objetivo">
+          <div class="tarjeta-objetivo-header">
+            <div class="tarjeta-objetivo-icono">${icon('routine')}</div>
+            <div><h3>${escapeHtml(miembro.nombre)}</h3><span class="badge">${MODALIDADES_GYM[miembro.modalidad] || miembro.modalidad}</span></div>
+          </div>
+          <p class="texto-suave texto-pequeno">DNI: ${escapeHtml(miembro.dni)}</p>
+          <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.8rem">
+            <span class="badge ${miembro.estadoCuota === 'vencido' ? 'badge-peligro' : 'badge-exito'}">${miembro.estadoCuota === 'vencido' ? 'Cuota vencida' : 'Cuota al día'}</span>
+            <button class="btn btn-fantasma btn-sm" id="btn-registrar-pago-socio">${icon('plus')} Registrar pago</button>
+            <button class="btn btn-fantasma btn-sm" id="btn-editar-socio">${icon('edit')} Editar</button>
+            <button class="btn-icono btn-icono-peligro" id="btn-borrar-socio" title="Eliminar socio">${icon('trash')}</button>
+          </div>
+          <button class="btn ${yaAsistio ? 'btn-fantasma' : 'btn-primario'} btn-full" id="btn-marcar-asistencia" style="margin-top:1rem" ${yaAsistio ? 'disabled' : ''}>
+            ${yaAsistio ? `${icon('check-circle')} Ya registró su entrada hoy` : `${icon('check')} Marcar entrada de hoy`}
+          </button>
+        </div>`;
+
+      $('#btn-marcar-asistencia').addEventListener('click', async () => {
+        await FirebaseService.marcarAsistencia(miembro.dni, miembro.nombre);
+        toast(`Entrada registrada: ${miembro.nombre}`, 'exito');
+        pintarMiembroEncontrado(miembro);
+        cargarAsistenciasDeHoy();
+      });
+      $('#btn-registrar-pago-socio').addEventListener('click', () => {
+        abrirModalRegistrarPago(miembro.dni, 'socioGym', FirebaseService.getUsuarioActual().uid, async () => {
+          await FirebaseService.actualizarMiembro(miembro.dni, { estadoCuota: 'al_dia' });
+          const actualizado = await FirebaseService.buscarMiembroPorDni(miembro.dni);
+          pintarMiembroEncontrado(actualizado);
+        });
+      });
+      $('#btn-editar-socio').addEventListener('click', () => abrirModalNuevoSocio(miembro.dni, () => buscar(), miembro));
+      $('#btn-borrar-socio').addEventListener('click', async () => {
+        if (!confirm(`¿Eliminar a ${miembro.nombre} (DNI ${miembro.dni})? Esta acción no se puede deshacer.`)) return;
+        await FirebaseService.eliminarMiembro(miembro.dni);
+        toast('Socio eliminado.', 'exito');
+        resultadoCont.innerHTML = '';
+        inputDni.value = '';
+        cargarListaSocios();
+      });
+    }
+
+    $('#btn-buscar-dni').addEventListener('click', buscar);
+    inputDni.addEventListener('keydown', (e) => { if (e.key === 'Enter') buscar(); });
+
+    async function cargarAsistenciasDeHoy() {
+      const asistencias = await FirebaseService.getAsistenciasDeHoy();
+      const cont2 = $('#lista-asistencias-hoy');
+      if (!cont2) return;
+      cont2.innerHTML = asistencias.length ? asistencias
+        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+        .map(a => `<div class="fila-historial" style="cursor:default"><div class="fila-historial-info"><strong>${escapeHtml(a.nombre)}</strong><span class="texto-suave">DNI ${escapeHtml(a.dni)}</span></div><span class="texto-suave texto-pequeno">${new Date(a.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')
+        : `<p class="texto-suave estado-vacio">Todavía no entró nadie hoy.</p>`;
+    }
+
+    async function cargarListaSocios() {
+      const cont3 = $('#lista-todos-socios');
+      if (!cont3 || cont3.dataset.oculto !== 'false') return;
+      const socios = await FirebaseService.listarMiembros();
+      cont3.innerHTML = socios.length ? socios.map(s => `
+        <div class="fila-historial" data-dni-fila="${s.dni}" role="button" tabindex="0" style="cursor:pointer">
+          <div class="fila-historial-info"><strong>${escapeHtml(s.nombre)}</strong><span class="texto-suave">DNI ${escapeHtml(s.dni)} · ${MODALIDADES_GYM[s.modalidad] || s.modalidad}</span></div>
+          <span class="badge ${s.estadoCuota === 'vencido' ? 'badge-peligro' : 'badge-exito'}">${s.estadoCuota === 'vencido' ? 'Vencido' : 'Al día'}</span>
+        </div>`).join('') : `<p class="texto-suave estado-vacio">Todavía no registraste ningún socio.</p>`;
+      $$('[data-dni-fila]', cont3).forEach(f => f.addEventListener('click', () => {
+        inputDni.value = f.dataset.dniFila;
+        buscar();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }));
+    }
+
+    $('#lista-todos-socios').dataset.oculto = 'true';
+    $('#btn-ver-todos-socios').addEventListener('click', (e) => {
+      const cont3 = $('#lista-todos-socios');
+      const oculto = cont3.dataset.oculto !== 'false';
+      cont3.dataset.oculto = oculto ? 'false' : 'true';
+      e.currentTarget.textContent = oculto ? 'Ocultar listado' : 'Ver listado completo';
+      if (oculto) { cont3.innerHTML = '<p class="texto-suave">Cargando...</p>'; cargarListaSocios(); }
+      else cont3.innerHTML = '';
+    });
+
+    cargarAsistenciasDeHoy();
+  }
+  RENDERERS['recepcion'] = renderRecepcion;
+
+  function abrirModalNuevoSocio(dniInicial, alGuardar, socioExistente) {
+    const esEdicion = !!socioExistente;
+    abrirModal(`
+      <div class="modal-header"><h3>${esEdicion ? icon('edit') : icon('plus')} ${esEdicion ? 'Editar socio' : 'Registrar socio nuevo'}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
+      <div class="modal-body">
+        <label class="campo"><span>Nombre y apellido</span><input type="text" id="input-nombre-socio" value="${escapeHtml(socioExistente?.nombre || '')}" autofocus></label>
+        <label class="campo"><span>DNI</span><input type="text" id="input-dni-socio" inputmode="numeric" value="${escapeHtml(String(dniInicial || ''))}" ${esEdicion ? 'disabled' : ''}></label>
+        <label class="campo"><span>Modalidad</span>
+          <select id="input-modalidad-socio">
+            <option value="musculacion" ${socioExistente?.modalidad === 'musculacion' ? 'selected' : ''}>Musculación</option>
+            <option value="pilates" ${socioExistente?.modalidad === 'pilates' ? 'selected' : ''}>Pilates</option>
+            <option value="ambas" ${socioExistente?.modalidad === 'ambas' ? 'selected' : ''}>Musculación + Pilates</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-fantasma" data-cerrar-modal>Cancelar</button>
+        <button class="btn btn-primario" id="btn-guardar-socio">${icon('check')} ${esEdicion ? 'Guardar cambios' : 'Registrar'}</button>
+      </div>`, { id: 'modal-nuevo-socio' });
+
+    $('#btn-guardar-socio').addEventListener('click', async () => {
+      const nombre = $('#input-nombre-socio').value.trim();
+      const dni = $('#input-dni-socio').value.trim();
+      const modalidad = $('#input-modalidad-socio').value;
+      if (!nombre || !dni) { toast('Completá nombre y DNI.', 'error'); return; }
+      try {
+        if (esEdicion) {
+          await FirebaseService.actualizarMiembro(dni, { nombre, modalidad });
+          toast('Socio actualizado.', 'exito');
+        } else {
+          await FirebaseService.registrarMiembro({ nombre, dni, modalidad });
+          toast('Socio registrado.', 'exito');
+        }
+        cerrarModal();
+        if (alGuardar) alGuardar();
+      } catch (err) {
+        toast(err.message || 'No se pudo guardar.', 'error');
+      }
+    });
+  }
 
   // Listado real de pagos individuales (no solo el resumen por mes), con
   // botón de borrar. Se reutiliza en el panel de entrenador y de superadmin.

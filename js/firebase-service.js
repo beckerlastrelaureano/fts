@@ -343,6 +343,81 @@ const FirebaseService = (() => {
     await db.collection('pagos').doc(id).delete();
   }
 
+  // ---------------------------------------------------------------------
+  // Recepción de gimnasio: socios sin cuenta de login, identificados por
+  // DNI (el DNI es directamente el ID del documento). Pensado para el
+  // modelo "gimnasio con control de acceso en la puerta", distinto del
+  // modelo de alumno con email/contraseña de las apps de PT.
+  // ---------------------------------------------------------------------
+  async function buscarMiembroPorDni(dni) {
+    const doc = await db.collection('miembrosGym').doc(String(dni).trim()).get();
+    if (!doc.exists) return null;
+    const datos = doc.data();
+    // Solo devolvemos el socio si es de ESTE entrenador (los datos ya están
+    // filtrados por regla de seguridad, esto es además una guarda del lado
+    // del cliente para no mostrar por error un socio de otro gimnasio).
+    if (datos.entrenadorId !== usuarioActual.uid) return null;
+    return { dni: doc.id, ...datos };
+  }
+
+  async function registrarMiembro({ nombre, dni, modalidad }) {
+    const dniLimpio = String(dni).trim();
+    const ref = db.collection('miembrosGym').doc(dniLimpio);
+    const yaExiste = (await ref.get()).exists;
+    if (yaExiste) throw new Error('Ya existe un socio registrado con ese DNI.');
+    const datos = {
+      nombre, modalidad, // 'musculacion' | 'pilates' | 'ambas'
+      entrenadorId: usuarioActual.uid,
+      estadoCuota: 'al_dia',
+      fechaAlta: new Date().toISOString()
+    };
+    await ref.set(datos);
+    return { dni: dniLimpio, ...datos };
+  }
+
+  async function actualizarMiembro(dni, cambios) {
+    await db.collection('miembrosGym').doc(String(dni).trim()).update(cambios);
+  }
+
+  async function eliminarMiembro(dni) {
+    await db.collection('miembrosGym').doc(String(dni).trim()).delete();
+  }
+
+  async function listarMiembros() {
+    if (!usuarioActual) return [];
+    const snap = await db.collection('miembrosGym').where('entrenadorId', '==', usuarioActual.uid).get();
+    return snap.docs.map(d => ({ dni: d.id, ...d.data() }));
+  }
+
+  function inicioDeHoy() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  async function yaAsistioHoy(dni) {
+    const snap = await db.collection('asistenciasGym')
+      .where('entrenadorId', '==', usuarioActual.uid)
+      .where('dni', '==', String(dni).trim())
+      .get();
+    const hoy = inicioDeHoy().getTime();
+    return snap.docs.some(d => new Date(d.data().fecha).getTime() >= hoy);
+  }
+
+  async function marcarAsistencia(dni, nombre) {
+    await db.collection('asistenciasGym').add({
+      dni: String(dni).trim(), nombre,
+      entrenadorId: usuarioActual.uid,
+      fecha: new Date().toISOString()
+    });
+  }
+
+  async function getAsistenciasDeHoy() {
+    const snap = await db.collection('asistenciasGym').where('entrenadorId', '==', usuarioActual.uid).get();
+    const hoy = inicioDeHoy().getTime();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => new Date(a.fecha).getTime() >= hoy);
+  }
+
   return {
     init, configurado,
     resolverCodigo,
@@ -351,6 +426,8 @@ const FirebaseService = (() => {
     listarAlumnos, actualizarFichaAlumno, getEstadoEntrenador, cambiarEstadoAlumno, eliminarAlumno,
     getRutina, guardarRutina, eliminarRutina,
     agregarEntrenamiento, getHistorial,
-    registrarPago, marcarCuotaVencida, getPagosDeAlumnos, getPagosDeEntrenadores, eliminarPago
+    registrarPago, marcarCuotaVencida, getPagosDeAlumnos, getPagosDeEntrenadores, eliminarPago,
+    buscarMiembroPorDni, registrarMiembro, actualizarMiembro, eliminarMiembro, listarMiembros,
+    yaAsistioHoy, marcarAsistencia, getAsistenciasDeHoy
   };
 })();
