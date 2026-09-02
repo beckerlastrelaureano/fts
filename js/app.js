@@ -725,7 +725,7 @@ const App = (() => {
   async function renderRecepcion() {
     const cont = $('#view-recepcion');
     cont.innerHTML = `
-      <div class="panel-header"><h2>${icon('search')} Recepción</h2></div>
+      <div class="panel-header-flex"><h2>${icon('search')} Recepción</h2><button class="btn btn-fantasma btn-sm" id="btn-modo-kiosco">${icon('play')} Modo autoservicio</button></div>
       <div class="panel" style="margin-bottom:1.2rem">
         <div class="campo-fila">
           <label class="campo" style="flex:1"><span>Buscar socio por DNI</span><input type="text" id="input-buscar-dni" inputmode="numeric" placeholder="Ej: 30123456" autofocus></label>
@@ -806,6 +806,7 @@ const App = (() => {
       });
     }
 
+    $('#btn-modo-kiosco').addEventListener('click', () => cambiarVista('kiosco'));
     $('#btn-buscar-dni').addEventListener('click', buscar);
     inputDni.addEventListener('keydown', (e) => { if (e.key === 'Enter') buscar(); });
 
@@ -848,6 +849,83 @@ const App = (() => {
     cargarAsistenciasDeHoy();
   }
   RENDERERS['recepcion'] = renderRecepcion;
+
+  // ---------------------------------------------------------------------
+  // Modo kiosco / autoservicio: pantalla para dejar en una tablet/compu
+  // en la entrada. El socio escribe su propio DNI con el teclado en
+  // pantalla y se le marca la asistencia solo, sin que el profe tenga
+  // que buscar ni tocar nada.
+  // ---------------------------------------------------------------------
+  function renderModoKiosco() {
+    const cont = $('#view-kiosco');
+    let dniActual = '';
+    let procesando = false;
+
+    cont.innerHTML = `
+      <button class="btn-icono kiosco-salir" id="btn-salir-kiosco" title="Salir del modo autoservicio">${icon('close')}</button>
+      <div class="kiosco-pantalla">
+        <p class="texto-suave" style="margin-bottom:.4rem">Ingresá tu DNI para registrar tu entrada</p>
+        <div class="kiosco-display" id="kiosco-display"><span class="kiosco-display-placeholder">— — — — — — — —</span></div>
+        <div class="teclado-numerico" id="teclado-numerico">
+          ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="tecla-numerica" data-tecla="${n}">${n}</button>`).join('')}
+          <button class="tecla-numerica" data-tecla="borrar">${icon('close')}</button>
+          <button class="tecla-numerica" data-tecla="0">0</button>
+          <button class="tecla-numerica tecla-numerica-accion" data-tecla="ok">${icon('check')}</button>
+        </div>
+        <div class="kiosco-mensaje" id="kiosco-mensaje"></div>
+      </div>`;
+
+    $('#btn-salir-kiosco').addEventListener('click', () => cambiarVista('recepcion'));
+
+    const display = $('#kiosco-display');
+    const mensaje = $('#kiosco-mensaje');
+
+    function pintarDisplay() {
+      display.innerHTML = dniActual ? escapeHtml(dniActual) : `<span class="kiosco-display-placeholder">— — — — — — — —</span>`;
+    }
+
+    function resetear() {
+      dniActual = '';
+      procesando = false;
+      pintarDisplay();
+      mensaje.innerHTML = '';
+    }
+
+    $$('[data-tecla]', cont).forEach(b => b.addEventListener('click', async () => {
+      if (procesando) return;
+      const tecla = b.dataset.tecla;
+      if (tecla === 'borrar') { dniActual = dniActual.slice(0, -1); pintarDisplay(); return; }
+      if (tecla === 'ok') {
+        if (!dniActual) return;
+        procesando = true;
+        mensaje.innerHTML = `<p class="texto-suave">Buscando...</p>`;
+        const miembro = await FirebaseService.buscarMiembroPorDni(dniActual);
+        if (!miembro) {
+          mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} No encontramos ese DNI. Pedile a un profe que te registre.</p>`;
+          setTimeout(resetear, 3500);
+          return;
+        }
+        if (miembro.estadoCuota === 'vencido') {
+          mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} Hola ${escapeHtml(miembro.nombre.split(' ')[0])}, tu cuota está vencida. Pasá por recepción.</p>`;
+          setTimeout(resetear, 4000);
+          return;
+        }
+        const yaAsistio = await FirebaseService.yaAsistioHoy(miembro.dni);
+        if (yaAsistio) {
+          mensaje.innerHTML = `<p class="kiosco-mensaje-exito">${icon('check-circle')} ¡Ya habías marcado tu entrada hoy, ${escapeHtml(miembro.nombre.split(' ')[0])}!</p>`;
+          setTimeout(resetear, 3000);
+          return;
+        }
+        await FirebaseService.marcarAsistencia(miembro.dni, miembro.nombre);
+        mensaje.innerHTML = `<p class="kiosco-mensaje-exito">${icon('check-circle')} ¡Bienvenido, ${escapeHtml(miembro.nombre.split(' ')[0])}!</p>`;
+        setTimeout(resetear, 3000);
+        return;
+      }
+      // dígito
+      if (dniActual.length < 12) { dniActual += tecla; pintarDisplay(); }
+    }));
+  }
+  RENDERERS['kiosco'] = renderModoKiosco;
 
   function abrirModalNuevoSocio(dniInicial, alGuardar, socioExistente) {
     const esEdicion = !!socioExistente;

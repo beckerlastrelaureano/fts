@@ -575,3 +575,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .btn-full { width: 100%; justify-content: center; }
 .tarjeta-objetivo-grande-activa { border-color: var(--color-acento); background: var(--color-acento-suave); }
 .badge-gif { position: absolute; top: .5rem; left: .5rem; z-index: 2; background: var(--color-acento); color: #fff; font-size: .62rem; font-weight: 700; letter-spacing: .04em; padding: .15rem .4rem; border-radius: 4px; }
+
+/* --------------------------------- Modo kiosco / autoservicio --------------------------------- */
+.kiosco-pantalla { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1rem; }
+.kiosco-display { font-family: var(--fuente-mono); font-size: 2.6rem; letter-spacing: .15em; min-height: 3.4rem; margin-bottom: 1.6rem; color: var(--color-texto); text-align: center; }
+.kiosco-display-placeholder { color: var(--color-texto-suave); }
+.teclado-numerico { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; width: 100%; max-width: 340px; }
+.tecla-numerica { aspect-ratio: 1; border-radius: var(--radio-lg); border: 1px solid var(--color-borde); background: var(--color-superficie); color: var(--color-texto); font-size: 1.6rem; font-weight: 600; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all var(--transicion); }
+.tecla-numerica:active { transform: scale(.94); background: var(--color-acento-suave); }
+.tecla-numerica-accion { background: var(--color-acento); color: #0A0B0D; border-color: var(--color-acento); }
+.kiosco-mensaje { margin-top: 1.8rem; text-align: center; max-width: 340px; }
+.kiosco-mensaje-exito { color: var(--color-exito); font-size: 1.3rem; font-weight: 700; }
+.kiosco-mensaje-error { color: #E05B5B; font-size: 1rem; }
+.kiosco-salir { position: fixed; top: 1rem; right: 1rem; opacity: .5; }
