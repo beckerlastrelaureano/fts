@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es" data-tema="oscuro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel de entrenador</title>
+<meta name="description" content="Gestioná a tus alumnos, asignales rutinas y seguí su progreso y asistencia.">
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#C026D3">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Panel de entrenador">
+<link rel="apple-touch-icon" href="assets/iconos/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/iconos/icon-192.png">
+
+<!-- marca.js define y aplica el nombre/colores de este cliente -->
+<script src="js/marca.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="splash-screen">
+  <img src="assets/iconos/logo-splash.png" alt="Logo" class="splash-logo-completo">
+</div>
+
+<div id="icon-sprite-holder" aria-hidden="true"></div>
+
+<!-- ============================== PANTALLA DE AUTENTICACIÓN ============================== -->
+<div id="pantalla-auth" class="pantalla-auth" hidden>
+  <div class="auth-card">
+    <img src="assets/iconos/logo-mark.png" alt="" class="auth-logo">
+    <h1 class="auth-titulo"><span data-marca="nombre"></span><strong data-marca="sufijo"></strong></h1>
+    <p class="texto-suave auth-subtitulo">Panel de entrenador y seguimiento de alumnos</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab auth-tab-activo" data-tab="login">Iniciar sesión</button>
+      <button class="auth-tab" data-tab="registro">Registrarme</button>
+    </div>
+
+    <form id="form-login" class="auth-form">
+      <label class="campo"><span>Email</span><input type="email" id="login-email" required autocomplete="username"></label>
+      <label class="campo"><span>Contraseña</span><input type="password" id="login-password" required autocomplete="current-password"></label>
+      <p id="login-error" class="auth-error" hidden></p>
+      <button type="submit" class="btn btn-primario btn-full">Entrar</button>
+      <button type="button" class="btn btn-texto btn-full" id="btn-olvide-password">Olvidé mi contraseña</button>
+    </form>
+
+    <form id="form-registro" class="auth-form" hidden>
+      <label class="campo"><span>Nombre y apellido</span><input type="text" id="registro-nombre" required autocomplete="name"></label>
+      <label class="campo"><span>Email</span><input type="email" id="registro-email" required autocomplete="username"></label>
+      <label class="campo"><span>Contraseña</span><input type="password" id="registro-password" required minlength="6" autocomplete="new-password"></label>
+      <p class="texto-suave texto-pequeno">Mínimo 6 caracteres.</p>
+      <label class="campo" id="campo-codigo"><span>Código de invitación</span><input type="text" id="registro-codigo" autocomplete="off" placeholder="El que te pasó tu entrenador (o Becker)"></label>
+      <p id="registro-error" class="auth-error" hidden></p>
+      <button type="submit" class="btn btn-primario btn-full">Crear mi cuenta</button>
+    </form>
+  </div>
+</div>
+
+<!-- ============================== CUENTA SUSPENDIDA ============================== -->
+<div id="pantalla-suspendido" class="pantalla-auth" hidden>
+  <div class="auth-card">
+    <img src="assets/iconos/logo-mark.png" alt="" class="auth-logo">
+    <h1 class="auth-titulo">Cuenta suspendida</h1>
+    <p class="texto-suave auth-subtitulo" id="texto-suspendido">Tu acceso está pausado por el momento. Consultá con quien te dio de alta para reactivarlo.</p>
+    <button class="btn btn-fantasma btn-full" id="btn-cerrar-sesion-suspendido">Cerrar sesión</button>
+  </div>
+</div>
+
+<!-- ============================== APP (entrenador o alumno) ============================== -->
+<div id="app" hidden>
+
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-logo">
+      <span class="sidebar-logo-icono"><img src="assets/iconos/logo-mark.png" alt="" class="sidebar-logo-marca"></span>
+      <span class="sidebar-logo-texto"><span data-marca="nombre"></span><strong data-marca="sufijo"></strong></span>
+    </div>
+
+    <nav class="sidebar-nav" id="sidebar-nav"></nav>
+
+    <div class="sidebar-pie">
+      <p class="texto-suave" id="sidebar-usuario"></p>
+      <button class="btn btn-fantasma btn-sm" id="btn-cerrar-sesion" style="margin-top:.5rem">Cerrar sesión</button>
+    </div>
+  </aside>
+
+  <div class="contenedor-principal">
+  <header class="topbar">
+    <button id="btn-menu-movil" class="btn-icono" aria-label="Abrir menú">
+      <svg class="icon"><use href="assets/iconos/sprite.svg#icon-exercises"></use></svg>
+    </button>
+    <span class="topbar-titulo"><span data-marca="nombre"></span><strong data-marca="sufijo"></strong></span>
+    <div class="topbar-spacer"></div>
+  </header>
+
+  <main id="main-content">
+    <!-- Vista de SUPERADMIN -->
+    <section id="view-superadmin" class="view"></section>
+
+    <!-- Vistas de ENTRENADOR -->
+    <section id="view-alumnos" class="view view-active"></section>
+    <section id="view-ficha-alumno" class="view"></section>
+
+    <!-- Vistas de ALUMNO -->
+    <section id="view-inicio" class="view"></section>
+    <section id="view-mi-rutina" class="view"></section>
+    <section id="view-sesion" class="view"></section>
+    <section id="view-mi-progreso" class="view"></section>
+    <section id="view-calendario" class="view"></section>
+    <section id="view-calculadoras" class="view"></section>
+  </main>
+  </div>
+
+  <div id="rest-timer-widget" class="timer-widget"></div>
+  <div id="modal-root"></div>
+  <div id="toast-container" aria-live="polite"></div>
+</div>
+
+<!-- Firebase (compat, para poder usarlo con scripts normales sin bundler) -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+
+<script src="js/database.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-service.js"></script>
+<script src="js/timer.js"></script>
+<script src="js/app.js"></script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW no registrado:', err));
+  });
+}
+</script>
+</body>
+</html>

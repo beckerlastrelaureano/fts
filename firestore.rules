@@ -1,0 +1,176 @@
+rules_version = '2';
+
+// ============================================================================
+// Reglas de seguridad — Becker Coach
+// Modelo de tres roles: superadmin / entrenador / alumno
+// ============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // FUNCIONES AUXILIARES
+    // ------------------------------------------------------------------
+
+    // El superadmin (Becker) se identifica por email fijo, igual que en
+    // js/firebase-config.js. ".lower()" para que no importen mayúsculas
+    // (el teclado del celular a veces autocapitaliza la primera letra).
+    function esSuperadmin() {
+      return request.auth != null &&
+             request.auth.token.email.lower() == 'beckerlastrelaureano@gmail.com';
+    }
+
+    function estoyAutenticado() {
+      return request.auth != null;
+    }
+
+    // Documento de usuario de quien está haciendo la petición
+    function miUsuario() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function soyEntrenador() {
+      return estoyAutenticado() && miUsuario().rol == 'entrenador';
+    }
+
+    function soyAlumno() {
+      return estoyAutenticado() && miUsuario().rol == 'alumno';
+    }
+
+    // ¿El usuario con uid = alumnoUid es alumno del entrenador autenticado?
+    function esMiAlumno(alumnoUid) {
+      return estoyAutenticado() &&
+             get(/databases/$(database)/documents/usuarios/$(alumnoUid)).data.entrenadorId == request.auth.uid;
+    }
+
+    // ------------------------------------------------------------------
+    // usuarios/{uid}
+    // ------------------------------------------------------------------
+    match /usuarios/{uid} {
+
+      // Nota: "resource.data.rol == 'entrenador'" (en vez de depender de la
+      // ficha propia del que pregunta) es lo que permite: (a) validar un
+      // código de entrenador durante el registro de un alumno, cuando
+      // todavía no existe su propia ficha, y (b) que un alumno vea si SU
+      // entrenador está suspendido. La info de un entrenador (nombre,
+      // negocio) no es sensible: es la que ya comparte con sus alumnos.
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && request.auth.uid == uid)
+                  || (estoyAutenticado() && resource.data.rol == 'entrenador')
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+
+      // Alta de cuenta: cada quien crea su propio documento al registrarse.
+      // Nadie puede autoasignarse el rol superadmin salvo el propio email
+      // de Becker (coincide con esSuperadmin()).
+      allow create: if estoyAutenticado() && request.auth.uid == uid &&
+                    ((esSuperadmin() && request.resource.data.rol == 'superadmin')
+                     || (!esSuperadmin() && request.resource.data.rol in ['entrenador', 'alumno']));
+
+      // El estadoPago (activo/suspendido) y el rol SOLO los toca el superadmin.
+      // Cada usuario puede editar el resto de su propia ficha (nombre, objetivo, nivel, etc.)
+      // y el entrenador puede editar esos mismos campos no sensibles en la
+      // ficha de SU alumno (para asignarle objetivo/nivel desde su panel).
+      allow update: if esSuperadmin()
+                    || (estoyAutenticado() && request.auth.uid == uid
+                        && !('estadoPago' in request.resource.data.diff(resource.data).affectedKeys())
+                        && !('rol' in request.resource.data.diff(resource.data).affectedKeys())
+                        && !('entrenadorId' in request.resource.data.diff(resource.data).affectedKeys()))
+                    || (estoyAutenticado() && esMiAlumno(uid)
+                        && !('rol' in request.resource.data.diff(resource.data).affectedKeys())
+                        && !('entrenadorId' in request.resource.data.diff(resource.data).affectedKeys()));
+
+      allow delete: if esSuperadmin()
+                    || (estoyAutenticado() && esMiAlumno(uid));
+    }
+
+    // ------------------------------------------------------------------
+    // codigosInvitacion/{codigo}
+    // ------------------------------------------------------------------
+    match /codigosInvitacion/{codigo} {
+
+      // Solo Becker genera códigos de invitación para entrenadores nuevos.
+      allow create: if esSuperadmin();
+
+      // "get" (consultar UN código que ya te pasaron, por su ID exacto) lo
+      // puede hacer cualquiera autenticado — así se valida en el registro.
+      // "list" (listar/navegar TODOS los códigos existentes) solo el
+      // superadmin — si no, cualquiera podría "pescar" un código de otro
+      // entrenador sin que Becker se lo haya dado.
+      allow get: if estoyAutenticado();
+      allow list: if esSuperadmin();
+
+      // Marcar el código como usado durante el registro. Solo se permite
+      // pasar de usado:false a usado:true, sin tocar tipo/nombreNegocio.
+      allow update: if esSuperadmin()
+                    || (estoyAutenticado()
+                        && resource.data.usado == false
+                        && request.resource.data.usado == true
+                        && request.resource.data.tipo == resource.data.tipo
+                        && request.resource.data.nombreNegocio == resource.data.nombreNegocio);
+
+      allow delete: if esSuperadmin();
+    }
+
+    // ------------------------------------------------------------------
+    // rutinas/{alumnoUid}   (el id del documento ES el uid del alumno)
+    // ------------------------------------------------------------------
+    match /rutinas/{alumnoUid} {
+
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && request.auth.uid == alumnoUid)
+                  || esMiAlumno(alumnoUid);
+
+      // La puede escribir el entrenador del alumno (asignación manual desde
+      // su ficha) O el propio alumno (cuando se autoasigna una rutina por
+      // objetivo desde "Mi rutina") — o el superadmin.
+      allow write: if esSuperadmin()
+                   || esMiAlumno(alumnoUid)
+                   || (estoyAutenticado() && request.auth.uid == alumnoUid);
+    }
+
+    // ------------------------------------------------------------------
+    // entrenamientos/{id}   (historial, append-only)
+    // ------------------------------------------------------------------
+    match /entrenamientos/{id} {
+
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && resource.data.alumnoUid == request.auth.uid)
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+
+      // El alumno registra su propio entrenamiento. El entrenadorId debe
+      // coincidir con el que tiene guardado en su propia ficha de usuario
+      // (así no puede inventarse un entrenador distinto).
+      allow create: if esSuperadmin()
+                    || (estoyAutenticado()
+                        && request.resource.data.alumnoUid == request.auth.uid
+                        && request.resource.data.entrenadorId == miUsuario().entrenadorId);
+
+      // Append-only: nadie edita ni borra entrenamientos ya guardados,
+      // ni siquiera el propio alumno.
+      allow update, delete: if esSuperadmin();
+    }
+
+    // ------------------------------------------------------------------
+    // pagos/{id}   (registro de pagos: entrenador→superadmin, alumno→entrenador)
+    // ------------------------------------------------------------------
+    match /pagos/{id} {
+
+      // Lectura: el propio pagador ve sus pagos; el entrenador ve los pagos
+      // de SUS alumnos (comparación directa de campos, sin get() extra, para
+      // que funcione bien en consultas de tipo "list" — mismo criterio que
+      // usamos para arreglar el historial de entrenamientos).
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && resource.data.uidPagador == request.auth.uid)
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+
+      // El superadmin registra pagos de entrenadores. El entrenador registra
+      // pagos de sus propios alumnos (entrenadorId debe ser el suyo).
+      allow create: if esSuperadmin()
+                    || (estoyAutenticado()
+                        && request.resource.data.rolPagador == 'alumno'
+                        && request.resource.data.entrenadorId == request.auth.uid);
+
+      allow update, delete: if esSuperadmin()
+                             || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+    }
+  }
+}
