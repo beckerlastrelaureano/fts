@@ -172,5 +172,42 @@ service cloud.firestore {
       allow update, delete: if esSuperadmin()
                              || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
     }
+
+    // ------------------------------------------------------------------
+    // miembrosGym/{dni}   (socios de un gimnasio: SIN cuenta de login,
+    // identificados por su DNI — modelo de "recepción", distinto del
+    // modelo de alumno con email/contraseña de las apps de PT).
+    // ------------------------------------------------------------------
+    match /miembrosGym/{dni} {
+      // "get" (consultar UN dni puntual, para buscar o para chequear si ya
+      // existe antes de registrar) tiene que poder resolver también cuando
+      // el documento NO existe todavía — ahí "resource" es null, y hay que
+      // dejarlo pasar (Firestore va a devolver "no existe", no datos de
+      // nadie). Si existe, recién ahí se exige que sea de este entrenador.
+      allow get: if esSuperadmin()
+                 || resource == null
+                 || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+      allow list: if esSuperadmin()
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+      allow create: if esSuperadmin()
+                    || (estoyAutenticado() && request.resource.data.entrenadorId == request.auth.uid);
+      allow update: if esSuperadmin()
+                    || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid
+                        && request.resource.data.entrenadorId == resource.data.entrenadorId);
+      allow delete: if esSuperadmin()
+                    || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+    }
+
+    // ------------------------------------------------------------------
+    // asistenciasGym/{id}   (check-in diario de un socio, append-only)
+    // ------------------------------------------------------------------
+    match /asistenciasGym/{id} {
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+      allow create: if esSuperadmin()
+                    || (estoyAutenticado() && request.resource.data.entrenadorId == request.auth.uid);
+      allow update, delete: if esSuperadmin()
+                             || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+    }
   }
 }
