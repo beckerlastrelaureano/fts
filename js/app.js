@@ -725,7 +725,12 @@ const App = (() => {
   async function renderRecepcion() {
     const cont = $('#view-recepcion');
     cont.innerHTML = `
-      <div class="panel-header-flex"><h2>${icon('search')} Recepción</h2><button class="btn btn-fantasma btn-sm" id="btn-modo-kiosco">${icon('play')} Modo autoservicio</button></div>
+      <div class="panel-header-flex"><h2>${icon('search')} Recepción</h2>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-primario btn-sm" id="btn-nuevo-socio-directo">${icon('plus')} Nuevo socio</button>
+          <button class="btn btn-fantasma btn-sm" id="btn-modo-kiosco">${icon('play')} Modo autoservicio</button>
+        </div>
+      </div>
       <div class="panel" style="margin-bottom:1.2rem">
         <div class="campo-fila">
           <label class="campo" style="flex:1"><span>Buscar socio por DNI</span><input type="text" id="input-buscar-dni" inputmode="numeric" placeholder="Ej: 30123456" autofocus></label>
@@ -764,13 +769,18 @@ const App = (() => {
 
     async function pintarMiembroEncontrado(miembro) {
       const yaAsistio = await FirebaseService.yaAsistioHoy(miembro.dni);
+      const nombreCompleto = [miembro.nombre, miembro.apellido].filter(Boolean).join(' ');
+      const nombresDias = { lun: 'Lun', mar: 'Mar', mie: 'Mié', jue: 'Jue', vie: 'Vie', sab: 'Sáb', dom: 'Dom' };
       resultadoCont.innerHTML = `
         <div class="tarjeta-objetivo">
           <div class="tarjeta-objetivo-header">
             <div class="tarjeta-objetivo-icono">${icon('routine')}</div>
-            <div><h3>${escapeHtml(miembro.nombre)}</h3><span class="badge">${MODALIDADES_GYM[miembro.modalidad] || miembro.modalidad}</span></div>
+            <div><h3>${escapeHtml(nombreCompleto)}</h3><span class="badge">${MODALIDADES_GYM[miembro.modalidad] || miembro.modalidad}</span></div>
           </div>
-          <p class="texto-suave texto-pequeno">DNI: ${escapeHtml(miembro.dni)}</p>
+          <p class="texto-suave texto-pequeno">DNI: ${escapeHtml(miembro.dni)} · Socio desde ${formatFecha(miembro.fechaAlta)}</p>
+          ${miembro.dias && miembro.dias.length ? `<p class="texto-suave texto-pequeno">Entrena: ${miembro.dias.map(d => nombresDias[d] || d).join(', ')}</p>` : ''}
+          ${miembro.diaPago ? `<p class="texto-suave texto-pequeno">Paga el día ${miembro.diaPago} de cada mes${miembro.ultimoPagoFecha ? ` · último pago ${formatFecha(miembro.ultimoPagoFecha)}` : ''}</p>` : ''}
+          ${miembro.descripcion ? `<p class="texto-suave texto-pequeno" style="margin-top:.4rem;font-style:italic">"${escapeHtml(miembro.descripcion)}"</p>` : ''}
           <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.8rem">
             <span class="badge ${miembro.estadoCuota === 'vencido' ? 'badge-peligro' : 'badge-exito'}">${miembro.estadoCuota === 'vencido' ? 'Cuota vencida' : 'Cuota al día'}</span>
             <button class="btn btn-fantasma btn-sm" id="btn-registrar-pago-socio">${icon('plus')} Registrar pago</button>
@@ -783,14 +793,14 @@ const App = (() => {
         </div>`;
 
       $('#btn-marcar-asistencia').addEventListener('click', async () => {
-        await FirebaseService.marcarAsistencia(miembro.dni, miembro.nombre);
-        toast(`Entrada registrada: ${miembro.nombre}`, 'exito');
+        await FirebaseService.marcarAsistencia(miembro.dni, nombreCompleto);
+        toast(`Entrada registrada: ${nombreCompleto}`, 'exito');
         pintarMiembroEncontrado(miembro);
         cargarAsistenciasDeHoy();
       });
       $('#btn-registrar-pago-socio').addEventListener('click', () => {
         abrirModalRegistrarPago(miembro.dni, 'socioGym', FirebaseService.getUsuarioActual().uid, async () => {
-          await FirebaseService.actualizarMiembro(miembro.dni, { estadoCuota: 'al_dia' });
+          await FirebaseService.actualizarMiembro(miembro.dni, { estadoCuota: 'al_dia', ultimoPagoFecha: new Date().toISOString() });
           const actualizado = await FirebaseService.buscarMiembroPorDni(miembro.dni);
           pintarMiembroEncontrado(actualizado);
         });
@@ -806,6 +816,7 @@ const App = (() => {
       });
     }
 
+    $('#btn-nuevo-socio-directo').addEventListener('click', () => abrirModalNuevoSocio(inputDni.value.trim(), () => { if (inputDni.value.trim()) buscar(); else cargarListaSocios(); }));
     $('#btn-modo-kiosco').addEventListener('click', () => cambiarVista('kiosco'));
     $('#btn-buscar-dni').addEventListener('click', buscar);
     inputDni.addEventListener('keydown', (e) => { if (e.key === 'Enter') buscar(); });
@@ -858,82 +869,103 @@ const App = (() => {
   // ---------------------------------------------------------------------
   function renderModoKiosco() {
     const cont = $('#view-kiosco');
-    let dniActual = '';
     let procesando = false;
 
     cont.innerHTML = `
       <button class="btn-icono kiosco-salir" id="btn-salir-kiosco" title="Salir del modo autoservicio">${icon('close')}</button>
       <div class="kiosco-pantalla">
-        <p class="texto-suave" style="margin-bottom:.4rem">Ingresá tu DNI para registrar tu entrada</p>
-        <div class="kiosco-display" id="kiosco-display"><span class="kiosco-display-placeholder">— — — — — — — —</span></div>
+        <p class="texto-suave" style="margin-bottom:.4rem">Ingresá tu DNI y apretá Enter para registrar tu entrada</p>
+        <input type="text" id="kiosco-input-dni" class="kiosco-display kiosco-input" inputmode="numeric" maxlength="8" placeholder="DNI" autofocus>
         <div class="teclado-numerico" id="teclado-numerico">
-          ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="tecla-numerica" data-tecla="${n}">${n}</button>`).join('')}
-          <button class="tecla-numerica" data-tecla="borrar">${icon('close')}</button>
-          <button class="tecla-numerica" data-tecla="0">0</button>
-          <button class="tecla-numerica tecla-numerica-accion" data-tecla="ok">${icon('check')}</button>
+          ${[1,2,3,4,5,6,7,8,9].map(n => `<button type="button" class="tecla-numerica" data-tecla="${n}">${n}</button>`).join('')}
+          <button type="button" class="tecla-numerica" data-tecla="borrar">${icon('close')}</button>
+          <button type="button" class="tecla-numerica" data-tecla="0">0</button>
+          <button type="button" class="tecla-numerica tecla-numerica-accion" data-tecla="ok">${icon('check')}</button>
         </div>
         <div class="kiosco-mensaje" id="kiosco-mensaje"></div>
       </div>`;
 
     $('#btn-salir-kiosco').addEventListener('click', () => cambiarVista('recepcion'));
 
-    const display = $('#kiosco-display');
+    const input = $('#kiosco-input-dni');
     const mensaje = $('#kiosco-mensaje');
-
-    function pintarDisplay() {
-      display.innerHTML = dniActual ? escapeHtml(dniActual) : `<span class="kiosco-display-placeholder">— — — — — — — —</span>`;
-    }
+    input.focus();
 
     function resetear() {
-      dniActual = '';
+      input.value = '';
       procesando = false;
-      pintarDisplay();
       mensaje.innerHTML = '';
+      input.focus();
     }
 
-    $$('[data-tecla]', cont).forEach(b => b.addEventListener('click', async () => {
+    // El input solo acepta números, hasta 8 dígitos — sirve tanto para
+    // tipear con teclado físico/numérico como para tocar el teclado en
+    // pantalla (que además suma dígitos a este mismo input).
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 8);
+      mensaje.innerHTML = '';
+    });
+
+    async function confirmar() {
       if (procesando) return;
-      const tecla = b.dataset.tecla;
-      if (tecla === 'borrar') { dniActual = dniActual.slice(0, -1); pintarDisplay(); return; }
-      if (tecla === 'ok') {
-        if (!dniActual) return;
-        procesando = true;
-        mensaje.innerHTML = `<p class="texto-suave">Buscando...</p>`;
-        const miembro = await FirebaseService.buscarMiembroPorDni(dniActual);
-        if (!miembro) {
-          mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} No encontramos ese DNI. Pedile a un profe que te registre.</p>`;
-          setTimeout(resetear, 3500);
-          return;
-        }
-        if (miembro.estadoCuota === 'vencido') {
-          mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} Hola ${escapeHtml(miembro.nombre.split(' ')[0])}, tu cuota está vencida. Pasá por recepción.</p>`;
-          setTimeout(resetear, 4000);
-          return;
-        }
-        const yaAsistio = await FirebaseService.yaAsistioHoy(miembro.dni);
-        if (yaAsistio) {
-          mensaje.innerHTML = `<p class="kiosco-mensaje-exito">${icon('check-circle')} ¡Ya habías marcado tu entrada hoy, ${escapeHtml(miembro.nombre.split(' ')[0])}!</p>`;
-          setTimeout(resetear, 3000);
-          return;
-        }
-        await FirebaseService.marcarAsistencia(miembro.dni, miembro.nombre);
-        mensaje.innerHTML = `<p class="kiosco-mensaje-exito">${icon('check-circle')} ¡Bienvenido, ${escapeHtml(miembro.nombre.split(' ')[0])}!</p>`;
+      const dni = input.value.trim();
+      if (dni.length !== 8) {
+        mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} El DNI tiene que tener 8 números.</p>`;
+        return;
+      }
+      procesando = true;
+      mensaje.innerHTML = `<p class="texto-suave">Buscando...</p>`;
+      const miembro = await FirebaseService.buscarMiembroPorDni(dni);
+      const nombreCompleto = miembro ? [miembro.nombre, miembro.apellido].filter(Boolean).join(' ') : '';
+      if (!miembro) {
+        mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} No encontramos ese DNI. Pedile a un profe que te registre.</p>`;
+        setTimeout(resetear, 3500);
+        return;
+      }
+      if (miembro.estadoCuota === 'vencido') {
+        mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} Hola ${escapeHtml(nombreCompleto.split(' ')[0])}, tu cuota está vencida. Pasá por recepción.</p>`;
+        setTimeout(resetear, 4000);
+        return;
+      }
+      const yaAsistio = await FirebaseService.yaAsistioHoy(miembro.dni);
+      if (yaAsistio) {
+        mensaje.innerHTML = `<p class="kiosco-mensaje-exito">${icon('check-circle')} ¡Ya habías marcado tu entrada hoy, ${escapeHtml(nombreCompleto.split(' ')[0])}!</p>`;
         setTimeout(resetear, 3000);
         return;
       }
-      // dígito
-      if (dniActual.length < 12) { dniActual += tecla; pintarDisplay(); }
+      await FirebaseService.marcarAsistencia(miembro.dni, nombreCompleto);
+      mensaje.innerHTML = `<p class="kiosco-mensaje-exito">${icon('check-circle')} ¡Bienvenido, ${escapeHtml(nombreCompleto.split(' ')[0])}!</p>`;
+      setTimeout(resetear, 3000);
+    }
+
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmar(); });
+
+    $$('[data-tecla]', cont).forEach(b => b.addEventListener('click', () => {
+      if (procesando) return;
+      const tecla = b.dataset.tecla;
+      if (tecla === 'borrar') { input.value = input.value.slice(0, -1); return; }
+      if (tecla === 'ok') { confirmar(); return; }
+      if (input.value.length < 8) input.value += tecla;
+      input.focus();
     }));
   }
   RENDERERS['kiosco'] = renderModoKiosco;
 
+  const DIAS_SEMANA_GYM = [{ v: 'lun', t: 'Lun' }, { v: 'mar', t: 'Mar' }, { v: 'mie', t: 'Mié' }, { v: 'jue', t: 'Jue' }, { v: 'vie', t: 'Vie' }, { v: 'sab', t: 'Sáb' }, { v: 'dom', t: 'Dom' }];
+
   function abrirModalNuevoSocio(dniInicial, alGuardar, socioExistente) {
     const esEdicion = !!socioExistente;
+    const diasActuales = socioExistente?.dias || [];
     abrirModal(`
       <div class="modal-header"><h3>${esEdicion ? icon('edit') : icon('plus')} ${esEdicion ? 'Editar socio' : 'Registrar socio nuevo'}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
       <div class="modal-body">
-        <label class="campo"><span>Nombre y apellido</span><input type="text" id="input-nombre-socio" value="${escapeHtml(socioExistente?.nombre || '')}" autofocus></label>
-        <label class="campo"><span>DNI</span><input type="text" id="input-dni-socio" inputmode="numeric" value="${escapeHtml(String(dniInicial || ''))}" ${esEdicion ? 'disabled' : ''}></label>
+        <label class="campo"><span>Nombre</span><input type="text" id="input-nombre-socio" value="${escapeHtml(socioExistente?.nombre || '')}" autofocus></label>
+        <label class="campo"><span>Apellido</span><input type="text" id="input-apellido-socio" value="${escapeHtml(socioExistente?.apellido || '')}"></label>
+        <label class="campo">
+          <span>DNI (8 dígitos)</span>
+          <input type="text" id="input-dni-socio" inputmode="numeric" maxlength="8" value="${escapeHtml(String(dniInicial || ''))}" ${esEdicion ? 'disabled' : ''}>
+        </label>
+        <p class="auth-error" id="error-dni-socio" hidden></p>
         <label class="campo"><span>Modalidad</span>
           <select id="input-modalidad-socio">
             <option value="musculacion" ${socioExistente?.modalidad === 'musculacion' ? 'selected' : ''}>Musculación</option>
@@ -941,29 +973,65 @@ const App = (() => {
             <option value="ambas" ${socioExistente?.modalidad === 'ambas' ? 'selected' : ''}>Musculación + Pilates</option>
           </select>
         </label>
+        <label class="campo"><span>Días que entrena</span></label>
+        <div class="filtros-chips" id="dias-socio-chips" style="margin-top:-.6rem;margin-bottom:.9rem">
+          ${DIAS_SEMANA_GYM.map(d => `<button type="button" class="chip ${diasActuales.includes(d.v) ? 'chip-activo' : ''}" data-dia="${d.v}">${d.t}</button>`).join('')}
+        </div>
+        <label class="campo"><span>Día de pago (del mes)</span><input type="number" id="input-diapago-socio" min="1" max="31" value="${socioExistente?.diaPago || ''}" placeholder="Ej: 10"></label>
+        <label class="campo"><span>Descripción / notas</span><textarea id="input-descripcion-socio" rows="3" style="width:100%;resize:vertical;background:var(--color-fondo-elevado);border:1px solid var(--color-borde-suave);border-radius:var(--radio-sm);padding:.6rem .8rem;color:var(--color-texto);font-family:inherit">${escapeHtml(socioExistente?.descripcion || '')}</textarea></label>
       </div>
       <div class="modal-footer">
         <button class="btn btn-fantasma" data-cerrar-modal>Cancelar</button>
         <button class="btn btn-primario" id="btn-guardar-socio">${icon('check')} ${esEdicion ? 'Guardar cambios' : 'Registrar'}</button>
       </div>`, { id: 'modal-nuevo-socio' });
 
+    const diasSeleccionados = new Set(diasActuales);
+    $$('#dias-socio-chips [data-dia]').forEach(b => b.addEventListener('click', () => {
+      const d = b.dataset.dia;
+      if (diasSeleccionados.has(d)) { diasSeleccionados.delete(d); b.classList.remove('chip-activo'); }
+      else { diasSeleccionados.add(d); b.classList.add('chip-activo'); }
+    }));
+
+    const inputDni = $('#input-dni-socio');
+    const errorDni = $('#error-dni-socio');
+    function dniValido(valor) { return /^\d{8}$/.test(valor); }
+    inputDni.addEventListener('input', () => {
+      inputDni.value = inputDni.value.replace(/\D/g, '').slice(0, 8);
+      errorDni.hidden = true;
+    });
+
     $('#btn-guardar-socio').addEventListener('click', async () => {
       const nombre = $('#input-nombre-socio').value.trim();
-      const dni = $('#input-dni-socio').value.trim();
+      const apellido = $('#input-apellido-socio').value.trim();
+      const dni = inputDni.value.trim();
       const modalidad = $('#input-modalidad-socio').value;
-      if (!nombre || !dni) { toast('Completá nombre y DNI.', 'error'); return; }
+      const diaPago = $('#input-diapago-socio').value ? Number($('#input-diapago-socio').value) : null;
+      const descripcion = $('#input-descripcion-socio').value.trim();
+      const dias = Array.from(diasSeleccionados);
+
+      if (!nombre) { toast('Completá el nombre.', 'error'); return; }
+      if (!esEdicion && !dniValido(dni)) {
+        errorDni.textContent = 'El DNI tiene que tener exactamente 8 números.';
+        errorDni.hidden = false;
+        return;
+      }
       try {
         if (esEdicion) {
-          await FirebaseService.actualizarMiembro(dni, { nombre, modalidad });
+          await FirebaseService.actualizarMiembro(dni, { nombre, apellido, modalidad, dias, diaPago, descripcion });
           toast('Socio actualizado.', 'exito');
         } else {
-          await FirebaseService.registrarMiembro({ nombre, dni, modalidad });
+          await FirebaseService.registrarMiembro({ nombre, apellido, dni, modalidad, dias, diaPago, descripcion });
           toast('Socio registrado.', 'exito');
         }
         cerrarModal();
         if (alGuardar) alGuardar();
       } catch (err) {
-        toast(err.message || 'No se pudo guardar.', 'error');
+        if (String(err.message || '').includes('Ya existe')) {
+          errorDni.textContent = err.message;
+          errorDni.hidden = false;
+        } else {
+          toast(err.message || 'No se pudo guardar.', 'error');
+        }
       }
     });
   }

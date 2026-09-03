@@ -360,15 +360,17 @@ const FirebaseService = (() => {
     return { dni: doc.id, ...datos };
   }
 
-  async function registrarMiembro({ nombre, dni, modalidad }) {
+  async function registrarMiembro({ nombre, apellido, dni, modalidad, dias, diaPago, descripcion }) {
     const dniLimpio = String(dni).trim();
     const ref = db.collection('miembrosGym').doc(dniLimpio);
     const yaExiste = (await ref.get()).exists;
     if (yaExiste) throw new Error('Ya existe un socio registrado con ese DNI.');
     const datos = {
-      nombre, modalidad, // 'musculacion' | 'pilates' | 'ambas'
+      nombre, apellido: apellido || '', modalidad, // 'musculacion' | 'pilates' | 'ambas'
+      dias: dias || [], diaPago: diaPago || '', descripcion: descripcion || '',
       entrenadorId: usuarioActual.uid,
       estadoCuota: 'al_dia',
+      ultimoPagoFecha: null,
       fechaAlta: new Date().toISOString()
     };
     await ref.set(datos);

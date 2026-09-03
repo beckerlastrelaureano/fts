@@ -580,6 +580,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .kiosco-pantalla { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1rem; }
 .kiosco-display { font-family: var(--fuente-mono); font-size: 2.6rem; letter-spacing: .15em; min-height: 3.4rem; margin-bottom: 1.6rem; color: var(--color-texto); text-align: center; }
 .kiosco-display-placeholder { color: var(--color-texto-suave); }
+.kiosco-input { width: 100%; max-width: 340px; background: var(--color-superficie); border: 2px solid var(--color-borde); border-radius: var(--radio-lg); padding: .6rem 1rem; }
+.kiosco-input:focus { outline: none; border-color: var(--color-acento); }
+.kiosco-input::placeholder { color: var(--color-texto-suave); letter-spacing: normal; font-size: 1.2rem; }
 .teclado-numerico { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; width: 100%; max-width: 340px; }
 .tecla-numerica { aspect-ratio: 1; border-radius: var(--radio-lg); border: 1px solid var(--color-borde); background: var(--color-superficie); color: var(--color-texto); font-size: 1.6rem; font-weight: 600; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all var(--transicion); }
 .tecla-numerica:active { transform: scale(.94); background: var(--color-acento-suave); }
