@@ -314,7 +314,13 @@ const FirebaseService = (() => {
   async function registrarPago(uidPagador, rolPagador, entrenadorId, monto) {
     const fecha = new Date().toISOString();
     await db.collection('pagos').add({ uidPagador, rolPagador, entrenadorId: entrenadorId || null, monto: Number(monto) || 0, fecha });
-    await db.collection('usuarios').doc(uidPagador).update({ estadoCuota: 'al_dia', ultimoPagoFecha: fecha, ultimoPagoMonto: Number(monto) || 0 });
+    // Los socios de gimnasio (rolPagador 'socioGym') no tienen ficha en
+    // "usuarios" — esa colección es solo para cuentas con login (alumnos
+    // de PT, entrenadores). Su estadoCuota se actualiza aparte, en
+    // miembrosGym, desde quien llama a esta función.
+    if (rolPagador !== 'socioGym') {
+      await db.collection('usuarios').doc(uidPagador).update({ estadoCuota: 'al_dia', ultimoPagoFecha: fecha, ultimoPagoMonto: Number(monto) || 0 });
+    }
   }
 
   async function marcarCuotaVencida(uid) {
@@ -391,6 +397,24 @@ const FirebaseService = (() => {
     return snap.docs.map(d => ({ dni: d.id, ...d.data() }));
   }
 
+  // Borra TODOS los socios y asistencias de ESTE entrenador (no toca a
+  // otros gimnasios que compartan la misma base). Usa lotes de Firestore
+  // (hasta 500 borrados por lote) para que sea rápido con muchos socios.
+  async function borrarTodosLosSocios() {
+    if (!usuarioActual) return { socios: 0, asistencias: 0 };
+    const [sniMiembros, snapAsistencias] = await Promise.all([
+      db.collection('miembrosGym').where('entrenadorId', '==', usuarioActual.uid).get(),
+      db.collection('asistenciasGym').where('entrenadorId', '==', usuarioActual.uid).get()
+    ]);
+    const todosLosDocs = [...sniMiembros.docs, ...snapAsistencias.docs];
+    for (let i = 0; i < todosLosDocs.length; i += 500) {
+      const lote = db.batch();
+      todosLosDocs.slice(i, i + 500).forEach(d => lote.delete(d.ref));
+      await lote.commit();
+    }
+    return { socios: sniMiembros.size, asistencias: snapAsistencias.size };
+  }
+
   function inicioDeHoy() {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -429,7 +453,7 @@ const FirebaseService = (() => {
     getRutina, guardarRutina, eliminarRutina,
     agregarEntrenamiento, getHistorial,
     registrarPago, marcarCuotaVencida, getPagosDeAlumnos, getPagosDeEntrenadores, eliminarPago,
-    buscarMiembroPorDni, registrarMiembro, actualizarMiembro, eliminarMiembro, listarMiembros,
+    buscarMiembroPorDni, registrarMiembro, actualizarMiembro, eliminarMiembro, listarMiembros, borrarTodosLosSocios,
     yaAsistioHoy, marcarAsistencia, getAsistenciasDeHoy
   };
 })();

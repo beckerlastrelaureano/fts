@@ -612,10 +612,15 @@ const App = (() => {
       </div>`, { id: 'modal-registrar-pago' });
     $('#btn-confirmar-pago').addEventListener('click', async () => {
       const monto = Number($('#input-monto-pago').value) || 0;
-      await FirebaseService.registrarPago(uidPagador, rolPagador, entrenadorId, monto);
-      cerrarModal();
-      toast('Pago registrado.', 'exito');
-      if (alRefrescar) alRefrescar();
+      try {
+        await FirebaseService.registrarPago(uidPagador, rolPagador, entrenadorId, monto);
+        cerrarModal();
+        toast('Pago registrado.', 'exito');
+        if (alRefrescar) alRefrescar();
+      } catch (err) {
+        console.error('Error registrando pago:', err);
+        toast('No se pudo registrar el pago. Probá de nuevo.', 'error');
+      }
     });
   }
 
@@ -742,7 +747,10 @@ const App = (() => {
       <div id="lista-asistencias-hoy"><p class="texto-suave">Cargando...</p></div>
       <div class="panel-header-flex" style="margin-top:2rem">
         <h3>Todos los socios</h3>
-        <button class="btn btn-fantasma btn-sm" id="btn-ver-todos-socios">${icon('routine')} Ver listado completo</button>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-fantasma btn-sm" id="btn-ver-todos-socios">${icon('routine')} Ver listado completo</button>
+          <button class="btn btn-fantasma btn-sm" id="btn-borrar-todos-socios" style="color:#E05B5B">${icon('trash')} Borrar todos los socios</button>
+        </div>
       </div>
       <div id="lista-todos-socios"></div>
     `;
@@ -855,6 +863,18 @@ const App = (() => {
       e.currentTarget.textContent = oculto ? 'Ocultar listado' : 'Ver listado completo';
       if (oculto) { cont3.innerHTML = '<p class="texto-suave">Cargando...</p>'; cargarListaSocios(); }
       else cont3.innerHTML = '';
+    });
+
+    $('#btn-borrar-todos-socios').addEventListener('click', async () => {
+      const escrito = prompt('Esto borra TODOS los socios y asistencias registradas (no se puede deshacer). Escribí BORRAR para confirmar:');
+      if (escrito !== 'BORRAR') { if (escrito !== null) toast('No se borró nada — hay que escribir BORRAR exacto.', 'info'); return; }
+      const resultado = await FirebaseService.borrarTodosLosSocios();
+      toast(`Se borraron ${resultado.socios} socios y ${resultado.asistencias} asistencias.`, 'exito');
+      resultadoCont.innerHTML = '';
+      inputDni.value = '';
+      cargarAsistenciasDeHoy();
+      const cont3 = $('#lista-todos-socios');
+      if (cont3.dataset.oculto === 'false') cargarListaSocios();
     });
 
     cargarAsistenciasDeHoy();
