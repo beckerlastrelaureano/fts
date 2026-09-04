@@ -444,6 +444,30 @@ const FirebaseService = (() => {
     return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => new Date(a.fecha).getTime() >= hoy);
   }
 
+  // ---------------------------------------------------------------------
+  // Gastos del gimnasio, separados por profesor (comparten un solo login,
+  // pero cada uno lleva su propio registro de compras/gastos).
+  // ---------------------------------------------------------------------
+  async function agregarGasto({ profesor, descripcion, monto }) {
+    await db.collection('gastosGym').add({
+      profesor, descripcion, monto: Number(monto) || 0,
+      entrenadorId: usuarioActual.uid,
+      fecha: new Date().toISOString()
+    });
+  }
+
+  async function listarGastos(profesor) {
+    const snap = await db.collection('gastosGym')
+      .where('entrenadorId', '==', usuarioActual.uid)
+      .where('profesor', '==', profesor)
+      .get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  async function eliminarGasto(id) {
+    await db.collection('gastosGym').doc(id).delete();
+  }
+
   return {
     init, configurado,
     resolverCodigo,
@@ -454,6 +478,7 @@ const FirebaseService = (() => {
     agregarEntrenamiento, getHistorial,
     registrarPago, marcarCuotaVencida, getPagosDeAlumnos, getPagosDeEntrenadores, eliminarPago,
     buscarMiembroPorDni, registrarMiembro, actualizarMiembro, eliminarMiembro, listarMiembros, borrarTodosLosSocios,
-    yaAsistioHoy, marcarAsistencia, getAsistenciasDeHoy
+    yaAsistioHoy, marcarAsistencia, getAsistenciasDeHoy,
+    agregarGasto, listarGastos, eliminarGasto
   };
 })();

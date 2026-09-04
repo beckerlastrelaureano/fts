@@ -498,7 +498,8 @@ const App = (() => {
     } else if (usuario.rol === 'entrenador') {
       nav.innerHTML = `
         <a href="#" class="nav-item" data-view="alumnos">${icon('routine')}<span>Mis alumnos</span></a>
-        <a href="#" class="nav-item" data-view="recepcion">${icon('search')}<span>Recepción</span></a>`;
+        <a href="#" class="nav-item" data-view="recepcion">${icon('search')}<span>Recepción</span></a>
+        <a href="#" class="nav-item" data-view="finanzas">${icon('stats')}<span>Finanzas</span></a>`;
     } else {
       nav.innerHTML = `
         <a href="#" class="nav-item" data-view="inicio">${icon('trophy')}<span>Inicio</span></a>
@@ -727,6 +728,18 @@ const App = (() => {
   // ---------------------------------------------------------------------
   const MODALIDADES_GYM = { musculacion: 'Musculación', pilates: 'Pilates', ambas: 'Musculación + Pilates' };
 
+  // Calcula si un socio está vencido: si pasaron más de 31 días desde su
+  // último pago (o desde el alta, si nunca pagó). No depende de que nadie
+  // lo marque a mano, se recalcula solo cada vez que se muestra. El "día
+  // de pago" cargado en la ficha es solo informativo (para mostrar "paga
+  // el día X"), no se usa para este cálculo — así evitamos casos raros de
+  // calendario (ej. alguien que pagó ayer y su día de pago es hoy).
+  function socioEstaVencido(miembro) {
+    const referencia = new Date(miembro.ultimoPagoFecha || miembro.fechaAlta || Date.now());
+    const diasTranscurridos = (Date.now() - referencia.getTime()) / (24 * 60 * 60 * 1000);
+    return diasTranscurridos > 31;
+  }
+
   async function renderRecepcion() {
     const cont = $('#view-recepcion');
     cont.innerHTML = `
@@ -752,7 +765,20 @@ const App = (() => {
           <button class="btn btn-fantasma btn-sm" id="btn-borrar-todos-socios" style="color:#E05B5B">${icon('trash')} Borrar todos los socios</button>
         </div>
       </div>
-      <div id="lista-todos-socios"></div>
+      <div class="filtros-fila" id="filtros-listado-socios" style="margin-top:.8rem">
+        <select id="filtro-estado-socios">
+          <option value="todos">Todos los estados</option>
+          <option value="al_dia">Solo al día</option>
+          <option value="vencido">Solo vencidos</option>
+        </select>
+        <select id="filtro-modalidad-socios">
+          <option value="todas">Todas las modalidades</option>
+          <option value="musculacion">Musculación</option>
+          <option value="pilates">Pilates</option>
+          <option value="ambas">Musculación + Pilates</option>
+        </select>
+      </div>
+      <div id="lista-todos-socios" style="margin-top:.8rem"></div>
     `;
 
     const inputDni = $('#input-buscar-dni');
@@ -790,7 +816,7 @@ const App = (() => {
           ${miembro.diaPago ? `<p class="texto-suave texto-pequeno">Paga el día ${miembro.diaPago} de cada mes${miembro.ultimoPagoFecha ? ` · último pago ${formatFecha(miembro.ultimoPagoFecha)}` : ''}</p>` : ''}
           ${miembro.descripcion ? `<p class="texto-suave texto-pequeno" style="margin-top:.4rem;font-style:italic">"${escapeHtml(miembro.descripcion)}"</p>` : ''}
           <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.8rem">
-            <span class="badge ${miembro.estadoCuota === 'vencido' ? 'badge-peligro' : 'badge-exito'}">${miembro.estadoCuota === 'vencido' ? 'Cuota vencida' : 'Cuota al día'}</span>
+            <span class="badge ${socioEstaVencido(miembro) ? 'badge-peligro' : 'badge-exito'}">${socioEstaVencido(miembro) ? 'Cuota vencida' : 'Cuota al día'}</span>
             <button class="btn btn-fantasma btn-sm" id="btn-registrar-pago-socio">${icon('plus')} Registrar pago</button>
             <button class="btn btn-fantasma btn-sm" id="btn-editar-socio">${icon('edit')} Editar</button>
             <button class="btn-icono btn-icono-peligro" id="btn-borrar-socio" title="Eliminar socio">${icon('trash')}</button>
@@ -839,21 +865,39 @@ const App = (() => {
         : `<p class="texto-suave estado-vacio">Todavía no entró nadie hoy.</p>`;
     }
 
-    async function cargarListaSocios() {
+    let filtroEstadoSocios = 'todos';
+    let filtroModalidadSocios = 'todas';
+    let ultimosSociosCargados = [];
+
+    function pintarFilasSocios() {
       const cont3 = $('#lista-todos-socios');
-      if (!cont3 || cont3.dataset.oculto !== 'false') return;
-      const socios = await FirebaseService.listarMiembros();
-      cont3.innerHTML = socios.length ? socios.map(s => `
+      const filtrados = ultimosSociosCargados.filter(s => {
+        if (filtroEstadoSocios === 'al_dia' && socioEstaVencido(s)) return false;
+        if (filtroEstadoSocios === 'vencido' && !socioEstaVencido(s)) return false;
+        if (filtroModalidadSocios !== 'todas' && s.modalidad !== filtroModalidadSocios) return false;
+        return true;
+      });
+      cont3.innerHTML = filtrados.length ? filtrados.map(s => `
         <div class="fila-historial" data-dni-fila="${s.dni}" role="button" tabindex="0" style="cursor:pointer">
-          <div class="fila-historial-info"><strong>${escapeHtml(s.nombre)}</strong><span class="texto-suave">DNI ${escapeHtml(s.dni)} · ${MODALIDADES_GYM[s.modalidad] || s.modalidad}</span></div>
-          <span class="badge ${s.estadoCuota === 'vencido' ? 'badge-peligro' : 'badge-exito'}">${s.estadoCuota === 'vencido' ? 'Vencido' : 'Al día'}</span>
-        </div>`).join('') : `<p class="texto-suave estado-vacio">Todavía no registraste ningún socio.</p>`;
+          <div class="fila-historial-info"><strong>${escapeHtml([s.nombre, s.apellido].filter(Boolean).join(' '))}</strong><span class="texto-suave">DNI ${escapeHtml(s.dni)} · ${MODALIDADES_GYM[s.modalidad] || s.modalidad}</span></div>
+          <span class="badge ${socioEstaVencido(s) ? 'badge-peligro' : 'badge-exito'}">${socioEstaVencido(s) ? 'Vencido' : 'Al día'}</span>
+        </div>`).join('') : `<p class="texto-suave estado-vacio">Ningún socio coincide con el filtro.</p>`;
       $$('[data-dni-fila]', cont3).forEach(f => f.addEventListener('click', () => {
         inputDni.value = f.dataset.dniFila;
         buscar();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }));
     }
+
+    async function cargarListaSocios() {
+      const cont3 = $('#lista-todos-socios');
+      if (!cont3 || cont3.dataset.oculto !== 'false') return;
+      ultimosSociosCargados = await FirebaseService.listarMiembros();
+      pintarFilasSocios();
+    }
+
+    $('#filtro-estado-socios').addEventListener('change', (e) => { filtroEstadoSocios = e.target.value; pintarFilasSocios(); });
+    $('#filtro-modalidad-socios').addEventListener('change', (e) => { filtroModalidadSocios = e.target.value; pintarFilasSocios(); });
 
     $('#lista-todos-socios').dataset.oculto = 'true';
     $('#btn-ver-todos-socios').addEventListener('click', (e) => {
@@ -942,7 +986,7 @@ const App = (() => {
         setTimeout(resetear, 3500);
         return;
       }
-      if (miembro.estadoCuota === 'vencido') {
+      if (socioEstaVencido(miembro)) {
         mensaje.innerHTML = `<p class="kiosco-mensaje-error">${icon('warning')} Hola ${escapeHtml(nombreCompleto.split(' ')[0])}, tu cuota está vencida. Pasá por recepción.</p>`;
         setTimeout(resetear, 4000);
         return;
@@ -970,6 +1014,90 @@ const App = (() => {
     }));
   }
   RENDERERS['kiosco'] = renderModoKiosco;
+
+  // ---------------------------------------------------------------------
+  // Finanzas: gastos/compras del gimnasio, separados por profesor. Samu y
+  // Karen comparten un solo login, pero cada uno tiene su propia sección
+  // acá adentro, sin mezclarse.
+  // ---------------------------------------------------------------------
+  const PROFESORES_FTS = { samu: 'Samu', karen: 'Karen' };
+
+  async function renderFinanzas() {
+    const cont = $('#view-finanzas');
+    let profesorActivo = 'samu';
+
+    cont.innerHTML = `
+      <div class="panel-header"><h2>${icon('stats')} Finanzas</h2></div>
+      <div class="filtros-chips" id="tabs-profesor" style="margin-bottom:1.2rem">
+        ${Object.entries(PROFESORES_FTS).map(([k, nombre]) => `<button type="button" class="chip ${k === profesorActivo ? 'chip-activo' : ''}" data-profesor="${k}">${escapeHtml(nombre)}</button>`).join('')}
+      </div>
+      <div class="panel" style="margin-bottom:1.2rem">
+        <div class="card-stat exito" style="max-width:220px">
+          <div class="card-stat-icono">${icon('stats')}</div>
+          <div class="card-stat-valor" id="total-gastos-profesor">$0</div>
+          <div class="card-stat-label" id="total-gastos-label">Gastado por Samu</div>
+        </div>
+      </div>
+      <div class="panel-header-flex">
+        <h3>Gastos y compras</h3>
+        <button class="btn btn-primario btn-sm" id="btn-agregar-gasto">${icon('plus')} Agregar gasto</button>
+      </div>
+      <div id="lista-gastos-profesor"><p class="texto-suave">Cargando...</p></div>
+    `;
+
+    async function cargar() {
+      const cont2 = $('#lista-gastos-profesor');
+      cont2.innerHTML = `<p class="texto-suave">Cargando...</p>`;
+      const gastos = await FirebaseService.listarGastos(profesorActivo);
+      const total = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+      $('#total-gastos-profesor').textContent = `$${formatNumero(total)}`;
+      $('#total-gastos-label').textContent = `Gastado por ${PROFESORES_FTS[profesorActivo]}`;
+      const ordenados = [...gastos].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      cont2.innerHTML = ordenados.length ? ordenados.map(g => `
+        <div class="fila-historial" style="cursor:default">
+          <div class="fila-historial-info"><strong>${escapeHtml(g.descripcion)}</strong><span class="texto-suave">${formatFecha(g.fecha)}</span></div>
+          <div class="fila-historial-volumen"><strong>$${formatNumero(g.monto)}</strong></div>
+          <button class="btn-icono btn-icono-peligro" data-borrar-gasto="${g.id}" title="Borrar gasto">${icon('trash')}</button>
+        </div>`).join('') : `<p class="texto-suave estado-vacio">${PROFESORES_FTS[profesorActivo]} todavía no cargó ningún gasto.</p>`;
+      $$('[data-borrar-gasto]', cont2).forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('¿Borrar este gasto?')) return;
+        await FirebaseService.eliminarGasto(b.dataset.borrarGasto);
+        toast('Gasto borrado.', 'exito');
+        cargar();
+      }));
+    }
+
+    $$('#tabs-profesor [data-profesor]').forEach(b => b.addEventListener('click', () => {
+      profesorActivo = b.dataset.profesor;
+      $$('#tabs-profesor [data-profesor]').forEach(bb => bb.classList.toggle('chip-activo', bb.dataset.profesor === profesorActivo));
+      cargar();
+    }));
+
+    $('#btn-agregar-gasto').addEventListener('click', () => {
+      abrirModal(`
+        <div class="modal-header"><h3>${icon('plus')} Agregar gasto — ${escapeHtml(PROFESORES_FTS[profesorActivo])}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
+        <div class="modal-body">
+          <label class="campo"><span>Descripción</span><input type="text" id="input-descripcion-gasto" placeholder="Ej: Mancuernas nuevas, stock heladera..." autofocus></label>
+          <label class="campo"><span>Monto</span><input type="number" id="input-monto-gasto" min="0" step="0.01" value="0"></label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-fantasma" data-cerrar-modal>Cancelar</button>
+          <button class="btn btn-primario" id="btn-guardar-gasto">${icon('check')} Guardar</button>
+        </div>`, { id: 'modal-agregar-gasto' });
+      $('#btn-guardar-gasto').addEventListener('click', async () => {
+        const descripcion = $('#input-descripcion-gasto').value.trim();
+        const monto = Number($('#input-monto-gasto').value) || 0;
+        if (!descripcion) { toast('Completá una descripción.', 'error'); return; }
+        await FirebaseService.agregarGasto({ profesor: profesorActivo, descripcion, monto });
+        cerrarModal();
+        toast('Gasto agregado.', 'exito');
+        cargar();
+      });
+    });
+
+    cargar();
+  }
+  RENDERERS['finanzas'] = renderFinanzas;
 
   const DIAS_SEMANA_GYM = [{ v: 'lun', t: 'Lun' }, { v: 'mar', t: 'Mar' }, { v: 'mie', t: 'Mié' }, { v: 'jue', t: 'Jue' }, { v: 'vie', t: 'Vie' }, { v: 'sab', t: 'Sáb' }, { v: 'dom', t: 'Dom' }];
 
