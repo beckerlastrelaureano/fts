@@ -448,9 +448,9 @@ const FirebaseService = (() => {
   // Gastos del gimnasio, separados por profesor (comparten un solo login,
   // pero cada uno lleva su propio registro de compras/gastos).
   // ---------------------------------------------------------------------
-  async function agregarGasto({ profesor, descripcion, monto }) {
+  async function agregarGasto({ profesor, descripcion, categoria, monto }) {
     await db.collection('gastosGym').add({
-      profesor, descripcion, monto: Number(monto) || 0,
+      profesor, descripcion, categoria: categoria || 'otro', monto: Number(monto) || 0,
       entrenadorId: usuarioActual.uid,
       fecha: new Date().toISOString()
     });

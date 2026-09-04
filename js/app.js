@@ -1022,13 +1022,21 @@ const App = (() => {
   // ---------------------------------------------------------------------
   const PROFESORES_FTS = { samu: 'Samu', karen: 'Karen' };
 
+  const CATEGORIAS_GASTO = { heladera: 'Heladera', maquinaria: 'Maquinaria', ropa: 'Ropa', otro: 'Otro' };
+
   async function renderFinanzas() {
     const cont = $('#view-finanzas');
     let profesorActivo = 'samu';
+    let filtroCategoria = 'todas';
 
     cont.innerHTML = `
       <div class="panel-header"><h2>${icon('stats')} Finanzas</h2></div>
-      <div class="filtros-chips" id="tabs-profesor" style="margin-bottom:1.2rem">
+
+      <div class="panel-header" style="margin-top:0"><h3>Balance del mes</h3></div>
+      <div id="balance-del-mes" style="margin-bottom:1.6rem"><p class="texto-suave">Cargando...</p></div>
+
+      <div class="panel-header-flex"><h3>Gastos por profesor</h3></div>
+      <div class="filtros-chips" id="tabs-profesor" style="margin:.8rem 0 1rem">
         ${Object.entries(PROFESORES_FTS).map(([k, nombre]) => `<button type="button" class="chip ${k === profesorActivo ? 'chip-activo' : ''}" data-profesor="${k}">${escapeHtml(nombre)}</button>`).join('')}
       </div>
       <div class="panel" style="margin-bottom:1.2rem">
@@ -1040,25 +1048,32 @@ const App = (() => {
       </div>
       <div class="panel-header-flex">
         <h3>Gastos y compras</h3>
-        <button class="btn btn-primario btn-sm" id="btn-agregar-gasto">${icon('plus')} Agregar gasto</button>
+        <div style="display:flex;gap:.5rem;align-items:center">
+          <select id="filtro-categoria-gasto">
+            <option value="todas">Todas las categorías</option>
+            ${Object.entries(CATEGORIAS_GASTO).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}
+          </select>
+          <button class="btn btn-primario btn-sm" id="btn-agregar-gasto">${icon('plus')} Agregar gasto</button>
+        </div>
       </div>
       <div id="lista-gastos-profesor"><p class="texto-suave">Cargando...</p></div>
     `;
 
-    async function cargar() {
+    let ultimosGastosCargados = [];
+
+    function pintarListaGastos() {
       const cont2 = $('#lista-gastos-profesor');
-      cont2.innerHTML = `<p class="texto-suave">Cargando...</p>`;
-      const gastos = await FirebaseService.listarGastos(profesorActivo);
-      const total = gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+      const filtrados = filtroCategoria === 'todas' ? ultimosGastosCargados : ultimosGastosCargados.filter(g => (g.categoria || 'otro') === filtroCategoria);
+      const total = filtrados.reduce((s, g) => s + (Number(g.monto) || 0), 0);
       $('#total-gastos-profesor').textContent = `$${formatNumero(total)}`;
-      $('#total-gastos-label').textContent = `Gastado por ${PROFESORES_FTS[profesorActivo]}`;
-      const ordenados = [...gastos].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      $('#total-gastos-label').textContent = `Gastado por ${PROFESORES_FTS[profesorActivo]}${filtroCategoria !== 'todas' ? ' · ' + CATEGORIAS_GASTO[filtroCategoria] : ''}`;
+      const ordenados = [...filtrados].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
       cont2.innerHTML = ordenados.length ? ordenados.map(g => `
         <div class="fila-historial" style="cursor:default">
-          <div class="fila-historial-info"><strong>${escapeHtml(g.descripcion)}</strong><span class="texto-suave">${formatFecha(g.fecha)}</span></div>
+          <div class="fila-historial-info"><strong>${escapeHtml(g.descripcion)}</strong><span class="texto-suave">${CATEGORIAS_GASTO[g.categoria] || 'Otro'} · ${formatFecha(g.fecha)}</span></div>
           <div class="fila-historial-volumen"><strong>$${formatNumero(g.monto)}</strong></div>
           <button class="btn-icono btn-icono-peligro" data-borrar-gasto="${g.id}" title="Borrar gasto">${icon('trash')}</button>
-        </div>`).join('') : `<p class="texto-suave estado-vacio">${PROFESORES_FTS[profesorActivo]} todavía no cargó ningún gasto.</p>`;
+        </div>`).join('') : `<p class="texto-suave estado-vacio">Ningún gasto en esta categoría todavía.</p>`;
       $$('[data-borrar-gasto]', cont2).forEach(b => b.addEventListener('click', async () => {
         if (!confirm('¿Borrar este gasto?')) return;
         await FirebaseService.eliminarGasto(b.dataset.borrarGasto);
@@ -1067,17 +1082,55 @@ const App = (() => {
       }));
     }
 
+    async function cargar() {
+      $('#lista-gastos-profesor').innerHTML = `<p class="texto-suave">Cargando...</p>`;
+      ultimosGastosCargados = await FirebaseService.listarGastos(profesorActivo);
+      pintarListaGastos();
+    }
+
+    async function cargarBalance() {
+      const contBalance = $('#balance-del-mes');
+      const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0, 0, 0, 0);
+      const [pagos, gastosSamu, gastosKaren] = await Promise.all([
+        FirebaseService.getPagosDeAlumnos().catch(() => []),
+        FirebaseService.listarGastos('samu'),
+        FirebaseService.listarGastos('karen')
+      ]);
+      const esDelMes = (fecha) => new Date(fecha).getTime() >= inicioMes.getTime();
+      const ingresosMes = pagos.filter(p => esDelMes(p.fecha)).reduce((s, p) => s + (Number(p.monto) || 0), 0);
+      const gastosDelMes = [...gastosSamu, ...gastosKaren].filter(g => esDelMes(g.fecha));
+      const gastosPorCategoria = {};
+      Object.keys(CATEGORIAS_GASTO).forEach(k => gastosPorCategoria[k] = 0);
+      gastosDelMes.forEach(g => { gastosPorCategoria[g.categoria || 'otro'] = (gastosPorCategoria[g.categoria || 'otro'] || 0) + (Number(g.monto) || 0); });
+      const totalGastosMes = gastosDelMes.reduce((s, g) => s + (Number(g.monto) || 0), 0);
+      const balanceNeto = ingresosMes - totalGastosMes;
+
+      contBalance.innerHTML = `
+        <div class="grid-cards-resumen" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+          <div class="card-stat exito"><div class="card-stat-icono">${icon('stats')}</div><div class="card-stat-valor">$${formatNumero(ingresosMes)}</div><div class="card-stat-label">Ingresos del mes</div></div>
+          ${Object.entries(CATEGORIAS_GASTO).map(([k, nombre]) => `<div class="card-stat"><div class="card-stat-icono">${icon('routine')}</div><div class="card-stat-valor">$${formatNumero(gastosPorCategoria[k])}</div><div class="card-stat-label">${nombre}</div></div>`).join('')}
+          <div class="card-stat ${balanceNeto >= 0 ? 'exito' : ''}"><div class="card-stat-icono">${icon(balanceNeto >= 0 ? 'check-circle' : 'warning')}</div><div class="card-stat-valor">$${formatNumero(balanceNeto)}</div><div class="card-stat-label">Balance neto</div></div>
+        </div>`;
+    }
+
     $$('#tabs-profesor [data-profesor]').forEach(b => b.addEventListener('click', () => {
       profesorActivo = b.dataset.profesor;
       $$('#tabs-profesor [data-profesor]').forEach(bb => bb.classList.toggle('chip-activo', bb.dataset.profesor === profesorActivo));
       cargar();
     }));
 
+    $('#filtro-categoria-gasto').addEventListener('change', (e) => { filtroCategoria = e.target.value; pintarListaGastos(); });
+
     $('#btn-agregar-gasto').addEventListener('click', () => {
       abrirModal(`
         <div class="modal-header"><h3>${icon('plus')} Agregar gasto — ${escapeHtml(PROFESORES_FTS[profesorActivo])}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
         <div class="modal-body">
           <label class="campo"><span>Descripción</span><input type="text" id="input-descripcion-gasto" placeholder="Ej: Mancuernas nuevas, stock heladera..." autofocus></label>
+          <label class="campo"><span>Categoría</span>
+            <select id="input-categoria-gasto">
+              ${Object.entries(CATEGORIAS_GASTO).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}
+            </select>
+          </label>
           <label class="campo"><span>Monto</span><input type="number" id="input-monto-gasto" min="0" step="0.01" value="0"></label>
         </div>
         <div class="modal-footer">
@@ -1086,16 +1139,19 @@ const App = (() => {
         </div>`, { id: 'modal-agregar-gasto' });
       $('#btn-guardar-gasto').addEventListener('click', async () => {
         const descripcion = $('#input-descripcion-gasto').value.trim();
+        const categoria = $('#input-categoria-gasto').value;
         const monto = Number($('#input-monto-gasto').value) || 0;
         if (!descripcion) { toast('Completá una descripción.', 'error'); return; }
-        await FirebaseService.agregarGasto({ profesor: profesorActivo, descripcion, monto });
+        await FirebaseService.agregarGasto({ profesor: profesorActivo, descripcion, categoria, monto });
         cerrarModal();
         toast('Gasto agregado.', 'exito');
         cargar();
+        cargarBalance();
       });
     });
 
     cargar();
+    cargarBalance();
   }
   RENDERERS['finanzas'] = renderFinanzas;
 
