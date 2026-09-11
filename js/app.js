@@ -499,7 +499,8 @@ const App = (() => {
       nav.innerHTML = `
         <a href="#" class="nav-item" data-view="alumnos">${icon('routine')}<span>Mis alumnos</span></a>
         <a href="#" class="nav-item" data-view="recepcion">${icon('search')}<span>Recepción</span></a>
-        <a href="#" class="nav-item" data-view="finanzas">${icon('stats')}<span>Finanzas</span></a>`;
+        <a href="#" class="nav-item" data-view="finanzas">${icon('stats')}<span>Finanzas</span></a>
+        <a href="#" class="nav-item" data-view="agenda-pilates">${icon('calendar')}<span>Agenda Pilates</span></a>`;
     } else {
       nav.innerHTML = `
         <a href="#" class="nav-item" data-view="inicio">${icon('trophy')}<span>Inicio</span></a>
@@ -602,10 +603,18 @@ const App = (() => {
   RENDERERS['superadmin'] = renderSuperadmin;
 
   function abrirModalRegistrarPago(uidPagador, rolPagador, entrenadorId, alRefrescar) {
+    const esSocioGym = rolPagador === 'socioGym';
     abrirModal(`
       <div class="modal-header"><h3>${icon('plus')} Registrar pago</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
       <div class="modal-body">
         <label class="campo"><span>Monto</span><input type="number" id="input-monto-pago" min="0" step="0.01" value="0" autofocus></label>
+        ${esSocioGym ? `<label class="campo"><span>¿Quién cobró?</span>
+          <select id="input-registrado-por-pago">
+            <option value="">Sin especificar</option>
+            <option value="karen">Karen</option>
+            <option value="samu">Samu</option>
+          </select>
+        </label>` : ''}
       </div>
       <div class="modal-footer">
         <button class="btn btn-fantasma" data-cerrar-modal>Cancelar</button>
@@ -613,8 +622,9 @@ const App = (() => {
       </div>`, { id: 'modal-registrar-pago' });
     $('#btn-confirmar-pago').addEventListener('click', async () => {
       const monto = Number($('#input-monto-pago').value) || 0;
+      const registradoPor = esSocioGym ? ($('#input-registrado-por-pago').value || null) : null;
       try {
-        await FirebaseService.registrarPago(uidPagador, rolPagador, entrenadorId, monto);
+        await FirebaseService.registrarPago(uidPagador, rolPagador, entrenadorId, monto, registradoPor);
         cerrarModal();
         toast('Pago registrado.', 'exito');
         if (alRefrescar) alRefrescar();
@@ -751,13 +761,18 @@ const App = (() => {
       </div>
       <div class="panel" style="margin-bottom:1.2rem">
         <div class="campo-fila">
-          <label class="campo" style="flex:1"><span>Buscar socio por DNI</span><input type="text" id="input-buscar-dni" inputmode="numeric" placeholder="Ej: 30123456" autofocus></label>
+          <label class="campo" style="flex:1"><span>Buscar socio por nombre o DNI</span><input type="text" id="input-buscar-dni" placeholder="Ej: Juan Pérez, o 30123456" autofocus></label>
           <button class="btn btn-primario" id="btn-buscar-dni" style="align-self:flex-end">${icon('search')} Buscar</button>
         </div>
       </div>
       <div id="resultado-busqueda-dni"></div>
-      <div class="panel-header" style="margin-top:2rem"><h3>Socios de hoy</h3></div>
+      <div class="panel-header-flex" style="margin-top:2rem">
+        <h3>Asistencias</h3>
+        <input type="date" id="input-fecha-asistencias" style="max-width:170px">
+      </div>
       <div id="lista-asistencias-hoy"><p class="texto-suave">Cargando...</p></div>
+      <div class="panel-header" style="margin-top:2rem"><h3>${icon('trophy')} Los que más vinieron este mes</h3></div>
+      <div id="ranking-asistencias-mes"><p class="texto-suave">Cargando...</p></div>
       <div class="panel-header-flex" style="margin-top:2rem">
         <h3>Todos los socios</h3>
         <div style="display:flex;gap:.5rem">
@@ -785,19 +800,51 @@ const App = (() => {
     const resultadoCont = $('#resultado-busqueda-dni');
 
     async function buscar() {
-      const dni = inputDni.value.trim();
-      if (!dni) return;
+      const texto = inputDni.value.trim();
+      if (!texto) return;
       resultadoCont.innerHTML = `<p class="texto-suave">Buscando...</p>`;
-      const miembro = await FirebaseService.buscarMiembroPorDni(dni);
-      if (miembro) {
-        await pintarMiembroEncontrado(miembro);
-      } else {
+      const esDni = /^\d{7,8}$/.test(texto);
+
+      if (esDni) {
+        const miembro = await FirebaseService.buscarMiembroPorDni(texto);
+        if (miembro) { await pintarMiembroEncontrado(miembro); return; }
         resultadoCont.innerHTML = `
           <div class="tarjeta-objetivo">
-            <p class="texto-suave">${icon('warning')} No hay ningún socio registrado con el DNI <strong>${escapeHtml(dni)}</strong>.</p>
+            <p class="texto-suave">${icon('warning')} No hay ningún socio registrado con el DNI <strong>${escapeHtml(texto)}</strong>.</p>
             <button class="btn btn-primario" id="btn-dar-alta-nuevo" style="margin-top:.8rem">${icon('plus')} Registrar socio nuevo</button>
           </div>`;
-        $('#btn-dar-alta-nuevo').addEventListener('click', () => abrirModalNuevoSocio(dni, buscar));
+        $('#btn-dar-alta-nuevo').addEventListener('click', () => abrirModalNuevoSocio(texto, buscar));
+        return;
+      }
+
+      // Búsqueda por nombre: como Firestore no busca texto parcial, traemos
+      // todos los socios de este gimnasio y filtramos acá (son pocos cientos
+      // como mucho, no hace falta nada más sofisticado).
+      const todos = await FirebaseService.listarMiembros();
+      const textoNorm = texto.toLowerCase();
+      const coincidencias = todos.filter(s => `${s.nombre} ${s.apellido || ''}`.toLowerCase().includes(textoNorm));
+
+      if (coincidencias.length === 0) {
+        resultadoCont.innerHTML = `
+          <div class="tarjeta-objetivo">
+            <p class="texto-suave">${icon('warning')} No encontramos ningún socio que coincida con "<strong>${escapeHtml(texto)}</strong>".</p>
+            <button class="btn btn-primario" id="btn-dar-alta-nuevo" style="margin-top:.8rem">${icon('plus')} Registrar socio nuevo</button>
+          </div>`;
+        $('#btn-dar-alta-nuevo').addEventListener('click', () => abrirModalNuevoSocio('', buscar));
+      } else if (coincidencias.length === 1) {
+        await pintarMiembroEncontrado(coincidencias[0]);
+      } else {
+        resultadoCont.innerHTML = `
+          <p class="texto-suave texto-pequeno" style="margin-bottom:.6rem">Encontramos ${coincidencias.length} coincidencias:</p>
+          ${coincidencias.map(s => `
+            <div class="fila-historial" data-dni-coincidencia="${s.dni}" role="button" tabindex="0" style="cursor:pointer">
+              <div class="fila-historial-info"><strong>${escapeHtml([s.nombre, s.apellido].filter(Boolean).join(' '))}</strong><span class="texto-suave">DNI ${escapeHtml(s.dni)}</span></div>
+              ${icon('chevron-right')}
+            </div>`).join('')}`;
+        $$('[data-dni-coincidencia]', resultadoCont).forEach(f => f.addEventListener('click', async () => {
+          const elegido = coincidencias.find(s => s.dni === f.dataset.dniCoincidencia);
+          await pintarMiembroEncontrado(elegido);
+        }));
       }
     }
 
@@ -855,14 +902,32 @@ const App = (() => {
     $('#btn-buscar-dni').addEventListener('click', buscar);
     inputDni.addEventListener('keydown', (e) => { if (e.key === 'Enter') buscar(); });
 
+    const inputFecha = $('#input-fecha-asistencias');
+    const hoyISO = new Date().toISOString().slice(0, 10);
+    inputFecha.value = hoyISO;
+
     async function cargarAsistenciasDeHoy() {
-      const asistencias = await FirebaseService.getAsistenciasDeHoy();
       const cont2 = $('#lista-asistencias-hoy');
       if (!cont2) return;
+      cont2.innerHTML = `<p class="texto-suave">Cargando...</p>`;
+      const fechaElegida = inputFecha.value || hoyISO;
+      const asistencias = await FirebaseService.getAsistenciasDeFecha(fechaElegida);
+      const esHoy = fechaElegida === hoyISO;
       cont2.innerHTML = asistencias.length ? asistencias
         .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
         .map(a => `<div class="fila-historial" style="cursor:default"><div class="fila-historial-info"><strong>${escapeHtml(a.nombre)}</strong><span class="texto-suave">DNI ${escapeHtml(a.dni)}</span></div><span class="texto-suave texto-pequeno">${new Date(a.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')
-        : `<p class="texto-suave estado-vacio">Todavía no entró nadie hoy.</p>`;
+        : `<p class="texto-suave estado-vacio">${esHoy ? 'Todavía no entró nadie hoy.' : 'Nadie registró entrada ese día.'}</p>`;
+    }
+    inputFecha.addEventListener('change', cargarAsistenciasDeHoy);
+
+    async function cargarRankingMes() {
+      const cont2 = $('#ranking-asistencias-mes');
+      const ranking = await FirebaseService.getRankingAsistenciasDelMes();
+      cont2.innerHTML = ranking.length ? ranking.slice(0, 15).map((r, i) => `
+        <div class="fila-historial" style="cursor:default">
+          <div class="fila-historial-info"><strong>${i + 1}. ${escapeHtml(r.nombre)}</strong><span class="texto-suave">DNI ${escapeHtml(r.dni)}</span></div>
+          <span class="badge badge-exito">${r.veces} ${r.veces === 1 ? 'vez' : 'veces'}</span>
+        </div>`).join('') : `<p class="texto-suave estado-vacio">Todavía no hay asistencias este mes.</p>`;
     }
 
     let filtroEstadoSocios = 'todos';
@@ -922,6 +987,7 @@ const App = (() => {
     });
 
     cargarAsistenciasDeHoy();
+    cargarRankingMes();
   }
   RENDERERS['recepcion'] = renderRecepcion;
 
@@ -1154,6 +1220,144 @@ const App = (() => {
     cargarBalance();
   }
   RENDERERS['finanzas'] = renderFinanzas;
+
+  // ---------------------------------------------------------------------
+  // Agenda de Pilates: agenda semanal por profe (Male/Sol/Aye/Agos), con
+  // turnos (día + horario) y hasta un cupo de alumnos anotados en cada uno.
+  // ---------------------------------------------------------------------
+  const PROFES_PILATES = { male: 'Male', sol: 'Sol', aye: 'Aye', agos: 'Agos' };
+  const DIAS_PILATES = { lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sábado' };
+
+  async function renderAgendaPilates() {
+    const cont = $('#view-agenda-pilates');
+    let profeActivo = 'male';
+
+    cont.innerHTML = `
+      <div class="panel-header-flex"><h2>${icon('calendar')} Agenda de Pilates</h2><button class="btn btn-fantasma btn-sm" id="btn-importar-pilates">${icon('routine')} Importar datos del Excel</button></div>
+      <div class="filtros-chips" id="tabs-profe-pilates" style="margin:1rem 0 1.2rem">
+        ${Object.entries(PROFES_PILATES).map(([k, nombre]) => `<button type="button" class="chip ${k === profeActivo ? 'chip-activo' : ''}" data-profe-pilates="${k}">${escapeHtml(nombre)}</button>`).join('')}
+      </div>
+      <button class="btn btn-primario btn-sm" id="btn-nuevo-turno-pilates" style="margin-bottom:1rem">${icon('plus')} Agregar turno</button>
+      <div id="grilla-pilates"><p class="texto-suave">Cargando...</p></div>
+    `;
+
+    $('#btn-importar-pilates').addEventListener('click', async () => {
+      if (!confirm('Esto carga los turnos y alumnos que ya estaban en el Excel (solo si la agenda está vacía). ¿Continuar?')) return;
+      const cantidad = await FirebaseService.importarClasesPilatesSiVacio();
+      toast(cantidad > 0 ? `Se importaron ${cantidad} turnos.` : 'La agenda ya tenía datos, no se importó nada.', cantidad > 0 ? 'exito' : 'info');
+      cargar();
+    });
+
+    $$('#tabs-profe-pilates [data-profe-pilates]').forEach(b => b.addEventListener('click', () => {
+      profeActivo = b.dataset.profePilates;
+      $$('#tabs-profe-pilates [data-profe-pilates]').forEach(bb => bb.classList.toggle('chip-activo', bb.dataset.profePilates === profeActivo));
+      cargar();
+    }));
+
+    $('#btn-nuevo-turno-pilates').addEventListener('click', () => {
+      abrirModal(`
+        <div class="modal-header"><h3>${icon('plus')} Nuevo turno — ${escapeHtml(PROFES_PILATES[profeActivo])}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
+        <div class="modal-body">
+          <label class="campo"><span>Día</span>
+            <select id="input-dia-turno">${Object.entries(DIAS_PILATES).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select>
+          </label>
+          <label class="campo"><span>Horario</span><input type="time" id="input-horario-turno" value="09:00"></label>
+          <label class="campo"><span>Cupo máximo</span><input type="number" id="input-cupo-turno" min="1" max="20" value="4"></label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-fantasma" data-cerrar-modal>Cancelar</button>
+          <button class="btn btn-primario" id="btn-guardar-turno">${icon('check')} Crear turno</button>
+        </div>`, { id: 'modal-nuevo-turno-pilates' });
+      $('#btn-guardar-turno').addEventListener('click', async () => {
+        await FirebaseService.crearClasePilates({
+          profe: profeActivo, dia: $('#input-dia-turno').value,
+          horario: $('#input-horario-turno').value, cupoMaximo: Number($('#input-cupo-turno').value) || 4
+        });
+        cerrarModal();
+        toast('Turno creado.', 'exito');
+        cargar();
+      });
+    });
+
+    async function cargar() {
+      const cont2 = $('#grilla-pilates');
+      cont2.innerHTML = `<p class="texto-suave">Cargando...</p>`;
+      const todas = await FirebaseService.listarClasesPilates();
+      const deEsteProfe = todas.filter(c => c.profe === profeActivo).sort((a, b) => a.horario.localeCompare(b.horario));
+
+      if (!deEsteProfe.length) {
+        cont2.innerHTML = `<div class="estado-vacio"><p>${icon('calendar')} ${escapeHtml(PROFES_PILATES[profeActivo])} todavía no tiene turnos cargados.</p></div>`;
+        return;
+      }
+
+      cont2.innerHTML = deEsteProfe.map(c => `
+        <div class="bloque-dia" data-turno-id="${c.id}">
+          <div class="dia-header">
+            <strong>${DIAS_PILATES[c.dia] || c.dia} · ${escapeHtml(c.horario)}</strong>
+            <span class="texto-suave texto-pequeno" style="margin-left:.6rem">${(c.alumnos || []).length}/${c.cupoMaximo || 4}</span>
+            <div style="margin-left:auto;display:flex;gap:.4rem">
+              <button class="btn btn-fantasma btn-sm" data-agregar-alumno-pilates="${c.id}">${icon('plus')} Anotar</button>
+              <button class="btn-icono btn-icono-peligro" data-borrar-turno-pilates="${c.id}" title="Borrar turno">${icon('trash')}</button>
+            </div>
+          </div>
+          <div class="lista-ejercicios-dia">
+            ${(c.alumnos || []).length ? c.alumnos.map((nombre, i) => `
+              <div class="fila-ejercicio-dia">
+                <div class="fila-ejercicio-dia-icono">${icon('routine')}</div>
+                <div class="fila-ejercicio-dia-info"><strong>${escapeHtml(nombre)}</strong></div>
+                <div class="fila-ejercicio-dia-acciones">
+                  <button class="btn-icono" data-editar-alumno-pilates="${c.id}:${i}" title="Editar nombre">${icon('edit')}</button>
+                  <button class="btn-icono btn-icono-peligro" data-quitar-alumno-pilates="${c.id}:${i}">${icon('close')}</button>
+                </div>
+              </div>`).join('') : '<p class="texto-suave texto-pequeno">Sin nadie anotado todavía.</p>'}
+          </div>
+        </div>`).join('');
+
+      $$('[data-borrar-turno-pilates]', cont2).forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('¿Borrar este turno completo, con todos los anotados?')) return;
+        await FirebaseService.eliminarClasePilates(b.dataset.borrarTurnoPilates);
+        toast('Turno borrado.', 'exito');
+        cargar();
+      }));
+
+      $$('[data-agregar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', () => {
+        const turno = deEsteProfe.find(c => c.id === b.dataset.agregarAlumnoPilates);
+        const nombre = prompt('Nombre del alumno a anotar:');
+        if (!nombre || !nombre.trim()) return;
+        if ((turno.alumnos || []).length >= (turno.cupoMaximo || 4)) {
+          if (!confirm('Este turno ya está en su cupo máximo. ¿Anotarlo igual?')) return;
+        }
+        const nuevaLista = [...(turno.alumnos || []), nombre.trim()];
+        FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista).catch(() => toast('No se pudo guardar.', 'error'));
+        turno.alumnos = nuevaLista;
+        cargar();
+      }));
+
+      $$('[data-editar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', () => {
+        const [turnoId, idx] = b.dataset.editarAlumnoPilates.split(':');
+        const turno = deEsteProfe.find(c => c.id === turnoId);
+        const nuevoNombre = prompt('Editar nombre:', turno.alumnos[Number(idx)]);
+        if (nuevoNombre === null || !nuevoNombre.trim()) return;
+        const nuevaLista = [...turno.alumnos];
+        nuevaLista[Number(idx)] = nuevoNombre.trim();
+        FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista).catch(() => toast('No se pudo guardar.', 'error'));
+        turno.alumnos = nuevaLista;
+        cargar();
+      }));
+
+      $$('[data-quitar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', () => {
+        const [turnoId, idx] = b.dataset.quitarAlumnoPilates.split(':');
+        const turno = deEsteProfe.find(c => c.id === turnoId);
+        const nuevaLista = turno.alumnos.filter((_, i) => i !== Number(idx));
+        FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista).catch(() => toast('No se pudo guardar.', 'error'));
+        turno.alumnos = nuevaLista;
+        cargar();
+      }));
+    }
+
+    cargar();
+  }
+  RENDERERS['agenda-pilates'] = renderAgendaPilates;
 
   const DIAS_SEMANA_GYM = [{ v: 'lun', t: 'Lun' }, { v: 'mar', t: 'Mar' }, { v: 'mie', t: 'Mié' }, { v: 'jue', t: 'Jue' }, { v: 'vie', t: 'Vie' }, { v: 'sab', t: 'Sáb' }, { v: 'dom', t: 'Dom' }];
 

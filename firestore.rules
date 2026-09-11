@@ -163,10 +163,11 @@ service cloud.firestore {
                   || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
 
       // El superadmin registra pagos de entrenadores. El entrenador registra
-      // pagos de sus propios alumnos (entrenadorId debe ser el suyo).
+      // pagos de sus propios alumnos o socios de gimnasio (entrenadorId
+      // debe ser el suyo).
       allow create: if esSuperadmin()
                     || (estoyAutenticado()
-                        && request.resource.data.rolPagador == 'alumno'
+                        && (request.resource.data.rolPagador == 'alumno' || request.resource.data.rolPagador == 'socioGym')
                         && request.resource.data.entrenadorId == request.auth.uid);
 
       allow update, delete: if esSuperadmin()
@@ -208,6 +209,36 @@ service cloud.firestore {
                     || (estoyAutenticado() && request.resource.data.entrenadorId == request.auth.uid);
       allow update, delete: if esSuperadmin()
                              || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+    }
+
+    // ------------------------------------------------------------------
+    // gastosGym/{id}   (gastos/compras del gimnasio, separados por
+    // profesor — Samu / Karen comparten un solo login, pero cada uno
+    // lleva su propio registro).
+    // ------------------------------------------------------------------
+    match /gastosGym/{id} {
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+      allow create: if esSuperadmin()
+                    || (estoyAutenticado() && request.resource.data.entrenadorId == request.auth.uid);
+      allow update, delete: if esSuperadmin()
+                             || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+    }
+
+    // ------------------------------------------------------------------
+    // clasesPilates/{id}   (agenda semanal de Pilates: un documento por
+    // combinación profe+día+horario, con la lista de alumnos anotados).
+    // ------------------------------------------------------------------
+    match /clasesPilates/{id} {
+      allow read: if esSuperadmin()
+                  || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
+      allow create: if esSuperadmin()
+                    || (estoyAutenticado() && request.resource.data.entrenadorId == request.auth.uid);
+      allow update: if esSuperadmin()
+                    || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid
+                        && request.resource.data.entrenadorId == resource.data.entrenadorId);
+      allow delete: if esSuperadmin()
+                    || (estoyAutenticado() && resource.data.entrenadorId == request.auth.uid);
     }
   }
 }

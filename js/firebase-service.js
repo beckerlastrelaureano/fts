@@ -311,9 +311,9 @@ const FirebaseService = (() => {
   // alumno→entrenador (cuota de entrenamiento). estadoCuota es un concepto
   // distinto de estadoPago (que es la suspensión de la cuenta).
   // ---------------------------------------------------------------------
-  async function registrarPago(uidPagador, rolPagador, entrenadorId, monto) {
+  async function registrarPago(uidPagador, rolPagador, entrenadorId, monto, registradoPor) {
     const fecha = new Date().toISOString();
-    await db.collection('pagos').add({ uidPagador, rolPagador, entrenadorId: entrenadorId || null, monto: Number(monto) || 0, fecha });
+    await db.collection('pagos').add({ uidPagador, rolPagador, entrenadorId: entrenadorId || null, monto: Number(monto) || 0, registradoPor: registradoPor || null, fecha });
     // Los socios de gimnasio (rolPagador 'socioGym') no tienen ficha en
     // "usuarios" — esa colección es solo para cuentas con login (alumnos
     // de PT, entrenadores). Su estadoCuota se actualiza aparte, en
@@ -444,6 +444,36 @@ const FirebaseService = (() => {
     return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => new Date(a.fecha).getTime() >= hoy);
   }
 
+  // Trae TODAS las asistencias de este gimnasio (para filtrar por fecha o
+  // armar el ranking del mes del lado del cliente). Un gimnasio chico/medio
+  // no tiene tantos registros como para que esto sea un problema.
+  async function getTodasLasAsistencias() {
+    const snap = await db.collection('asistenciasGym').where('entrenadorId', '==', usuarioActual.uid).get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  async function getAsistenciasDeFecha(fechaISO) {
+    const inicio = new Date(fechaISO); inicio.setHours(0, 0, 0, 0);
+    const fin = new Date(fechaISO); fin.setHours(23, 59, 59, 999);
+    const todas = await getTodasLasAsistencias();
+    return todas.filter(a => {
+      const t = new Date(a.fecha).getTime();
+      return t >= inicio.getTime() && t <= fin.getTime();
+    });
+  }
+
+  async function getRankingAsistenciasDelMes() {
+    const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0, 0, 0, 0);
+    const todas = await getTodasLasAsistencias();
+    const delMes = todas.filter(a => new Date(a.fecha).getTime() >= inicioMes.getTime());
+    const conteo = {};
+    delMes.forEach(a => {
+      if (!conteo[a.dni]) conteo[a.dni] = { dni: a.dni, nombre: a.nombre, veces: 0 };
+      conteo[a.dni].veces++;
+    });
+    return Object.values(conteo).sort((a, b) => b.veces - a.veces);
+  }
+
   // ---------------------------------------------------------------------
   // Gastos del gimnasio, separados por profesor (comparten un solo login,
   // pero cada uno lleva su propio registro de compras/gastos).
@@ -468,6 +498,48 @@ const FirebaseService = (() => {
     await db.collection('gastosGym').doc(id).delete();
   }
 
+  // ---------------------------------------------------------------------
+  // Agenda de Pilates: un documento por combinación profe+día+horario, con
+  // la lista de alumnos anotados en ese turno. CLASES_PILATES_SEED trae la
+  // data real que ya estaba en el Excel del gimnasio, para no perderla al
+  // pasar al sistema nuevo — se usa una sola vez si la colección está vacía.
+  // ---------------------------------------------------------------------
+  const CLASES_PILATES_SEED = [{"profe": "male", "dia": "miercoles", "horario": "06:00", "alumnos": ["Marcos Martin (septiembre)"], "cupoMaximo": 4}, {"profe": "male", "dia": "lunes", "horario": "07:00", "alumnos": ["Franco Pignatta", "Laura Baudino", "Sebastian Pereyra", "Sol Marzari"], "cupoMaximo": 4}, {"profe": "male", "dia": "miercoles", "horario": "07:00", "alumnos": ["franco Pignatta", "Camila Romani", "Sebastian Pereyra", "Laura Baudino"], "cupoMaximo": 4}, {"profe": "male", "dia": "jueves", "horario": "07:00", "alumnos": ["Mateo Zuñiga", "Guille Molina"], "cupoMaximo": 4}, {"profe": "male", "dia": "viernes", "horario": "07:00", "alumnos": ["Laura baudino", "Franco Pignatta", "sebastian Pereyra", "Sol marzari"], "cupoMaximo": 4}, {"profe": "male", "dia": "martes", "horario": "12:00", "alumnos": ["Andrea Canillas", "Valeria Bonessi"], "cupoMaximo": 4}, {"profe": "male", "dia": "jueves", "horario": "12:00", "alumnos": ["Andrea Canillas", "Valeria Bonessi"], "cupoMaximo": 4}, {"profe": "male", "dia": "lunes", "horario": "13:30", "alumnos": ["Carina", "Yaye Garro", "Micaela Pereyra"], "cupoMaximo": 4}, {"profe": "male", "dia": "martes", "horario": "13:30", "alumnos": ["Micaela Pereyra", "Delfina Castresana", "Sofia Castellano", "Valen Talavera"], "cupoMaximo": 4}, {"profe": "male", "dia": "jueves", "horario": "13:30", "alumnos": ["Micaela Pereyra", "Delfina Castresana", "Sofia Castellano", "Valen Talavera"], "cupoMaximo": 4}, {"profe": "male", "dia": "martes", "horario": "17:30", "alumnos": ["Elian Fredes", "Seba Andreoli", "Fefi del Monaco"], "cupoMaximo": 4}, {"profe": "male", "dia": "lunes", "horario": "18:30", "alumnos": ["Silvia Canella", "Emilia Castro", "Julian Crespo"], "cupoMaximo": 4}, {"profe": "male", "dia": "martes", "horario": "18:30", "alumnos": ["Juan Ignacio", "Joaquín Rios", "Julian Crespo"], "cupoMaximo": 4}, {"profe": "male", "dia": "miercoles", "horario": "18:30", "alumnos": ["Alicia Armoa", "Ruben Garcia", "Silvia Canella", "Mili Avalos"], "cupoMaximo": 4}, {"profe": "male", "dia": "jueves", "horario": "18:30", "alumnos": ["Seba Andreoli", "Fefi del Monaco"], "cupoMaximo": 4}, {"profe": "male", "dia": "viernes", "horario": "18:30", "alumnos": ["Alicia Armoa", "Ruben Garcia", "mili avalos", "Silvia Canella"], "cupoMaximo": 4}, {"profe": "sol", "dia": "lunes", "horario": "08:00", "alumnos": ["Nati Pineda", "Karen Ponce", "Cami Romani", "Gilda Bertorello"], "cupoMaximo": 4}, {"profe": "sol", "dia": "miercoles", "horario": "08:00", "alumnos": ["Belu campos", "Juli Poch", "Anto Noriega"], "cupoMaximo": 4}, {"profe": "sol", "dia": "jueves", "horario": "08:00", "alumnos": ["Nati Pineda", "Gilda Bertorello"], "cupoMaximo": 4}, {"profe": "sol", "dia": "viernes", "horario": "08:00", "alumnos": ["Gilda Bertorello", "Anto Noriega"], "cupoMaximo": 4}, {"profe": "sol", "dia": "lunes", "horario": "09:00", "alumnos": ["Juli Poch", "Kimei Juricich", "Guille Molina", "Angi Biondi"], "cupoMaximo": 4}, {"profe": "sol", "dia": "miercoles", "horario": "09:00", "alumnos": ["Kimei Juricich"], "cupoMaximo": 4}, {"profe": "sol", "dia": "jueves", "horario": "10:00", "alumnos": ["Dai Manuel", "Angi Biondi", "Khate García"], "cupoMaximo": 4}, {"profe": "sol", "dia": "lunes", "horario": "19:30", "alumnos": ["Sofia Seijo", "Ara Garcia", "Cami Barovero", "Dai Vicente"], "cupoMaximo": 4}, {"profe": "sol", "dia": "miercoles", "horario": "19:30", "alumnos": ["Cami Betz", "Ara Garcia", "Dai Vicente", "Yani Rios"], "cupoMaximo": 4}, {"profe": "sol", "dia": "jueves", "horario": "19:30", "alumnos": ["Yani Rios", "Karina Drehock"], "cupoMaximo": 4}, {"profe": "sol", "dia": "viernes", "horario": "19:30", "alumnos": ["Yani Balent", "Dai Vicente", "Ara Garcia", "Sofia Seijo"], "cupoMaximo": 4}, {"profe": "sol", "dia": "lunes", "horario": "20:30", "alumnos": ["Nancy Hourcade", "Glatigny Marina", "Mateo Zuñiga", "Melisa Piaza"], "cupoMaximo": 4}, {"profe": "sol", "dia": "miercoles", "horario": "20:30", "alumnos": ["Glatigny Marina", "Renata baigorria", "Maggie Manuel"], "cupoMaximo": 4}, {"profe": "sol", "dia": "jueves", "horario": "20:30", "alumnos": ["Cami Barovero", "Lu Lucero", "Gonzalo Martínez", "Macarena Barbosa"], "cupoMaximo": 4}, {"profe": "aye", "dia": "lunes", "horario": "14:30", "alumnos": ["Sil andreoli", "Vani Muñoz", "Josefina Galan"], "cupoMaximo": 4}, {"profe": "aye", "dia": "martes", "horario": "14:30", "alumnos": ["Alfo Bertone"], "cupoMaximo": 4}, {"profe": "aye", "dia": "miercoles", "horario": "14:30", "alumnos": ["Dai Iglesias", "Ana Paula pirchio", "Josefina Galan"], "cupoMaximo": 4}, {"profe": "aye", "dia": "viernes", "horario": "14:30", "alumnos": ["Ana Paula Pirchio", "Alfo Bertone", "Josefina Galan"], "cupoMaximo": 4}, {"profe": "aye", "dia": "lunes", "horario": "15:30", "alumnos": ["Mirta Núñez", "Laura Bravo", "Nany Mazzoky"], "cupoMaximo": 4}, {"profe": "aye", "dia": "martes", "horario": "15:30", "alumnos": ["Nadina Sidoni", "Belen Campos", "Lean Pereyra", "Nany Mazzoky"], "cupoMaximo": 4}, {"profe": "aye", "dia": "miercoles", "horario": "15:30", "alumnos": ["Gonza Peiretti", "Greta Gisoue", "Mirta Núñez"], "cupoMaximo": 4}, {"profe": "aye", "dia": "jueves", "horario": "15:30", "alumnos": ["Meli Piazza", "Nancy Hourcade", "Lean pereyra", "Rusa Scheger"], "cupoMaximo": 4}, {"profe": "aye", "dia": "viernes", "horario": "15:30", "alumnos": ["Belén Campos", "Mirta Núñez", "Laura Bravo", "Karina Drehock (por este viernes)"], "cupoMaximo": 4}, {"profe": "aye", "dia": "lunes", "horario": "16:30", "alumnos": ["Greta Gisoue", "Jazmin Zabala"], "cupoMaximo": 4}, {"profe": "aye", "dia": "miercoles", "horario": "17:30", "alumnos": ["Pablo Gandino", "Jazmin Zabala"], "cupoMaximo": 4}, {"profe": "aye", "dia": "viernes", "horario": "17:30", "alumnos": ["Pablo Gandino", "Jazmin Zabala"], "cupoMaximo": 4}, {"profe": "agos", "dia": "lunes", "horario": "11:00", "alumnos": ["Lucia Edreira", "Camila Betz"], "cupoMaximo": 4}, {"profe": "agos", "dia": "jueves", "horario": "11:00", "alumnos": ["Lucia Edreira", "Marta Zabala"], "cupoMaximo": 4}, {"profe": "agos", "dia": "martes", "horario": "19:30", "alumnos": ["Maru García (mamá Agos", "Yani Ríos", "Karina Drehock"], "cupoMaximo": 4}, {"profe": "agos", "dia": "martes", "horario": "20:30", "alumnos": ["Lu Lucero", "Maca Barbosa", "Cami García", "Brisa Muratori"], "cupoMaximo": 4}, {"profe": "agos", "dia": "viernes", "horario": "20:30", "alumnos": ["Cami García", "Nicolas Bergonzi", "Nany Mazzokky", "Brisa Muratori"], "cupoMaximo": 4}]
+;
+
+  async function listarClasesPilates() {
+    if (!usuarioActual) return [];
+    const snap = await db.collection('clasesPilates').where('entrenadorId', '==', usuarioActual.uid).get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  async function importarClasesPilatesSiVacio() {
+    const actuales = await listarClasesPilates();
+    if (actuales.length > 0) return 0;
+    const lote = db.batch();
+    CLASES_PILATES_SEED.forEach(c => {
+      const ref = db.collection('clasesPilates').doc();
+      lote.set(ref, { ...c, entrenadorId: usuarioActual.uid });
+    });
+    await lote.commit();
+    return CLASES_PILATES_SEED.length;
+  }
+
+  async function crearClasePilates({ profe, dia, horario, cupoMaximo }) {
+    await db.collection('clasesPilates').add({
+      profe, dia, horario, cupoMaximo: cupoMaximo || 4, alumnos: [],
+      entrenadorId: usuarioActual.uid
+    });
+  }
+
+  async function actualizarAlumnosClasePilates(id, alumnos) {
+    await db.collection('clasesPilates').doc(id).update({ alumnos });
+  }
+
+  async function eliminarClasePilates(id) {
+    await db.collection('clasesPilates').doc(id).delete();
+  }
+
   return {
     init, configurado,
     resolverCodigo,
@@ -478,7 +550,8 @@ const FirebaseService = (() => {
     agregarEntrenamiento, getHistorial,
     registrarPago, marcarCuotaVencida, getPagosDeAlumnos, getPagosDeEntrenadores, eliminarPago,
     buscarMiembroPorDni, registrarMiembro, actualizarMiembro, eliminarMiembro, listarMiembros, borrarTodosLosSocios,
-    yaAsistioHoy, marcarAsistencia, getAsistenciasDeHoy,
-    agregarGasto, listarGastos, eliminarGasto
+    yaAsistioHoy, marcarAsistencia, getAsistenciasDeHoy, getAsistenciasDeFecha, getRankingAsistenciasDelMes,
+    agregarGasto, listarGastos, eliminarGasto,
+    listarClasesPilates, importarClasesPilatesSiVacio, crearClasePilates, actualizarAlumnosClasePilates, eliminarClasePilates
   };
 })();
