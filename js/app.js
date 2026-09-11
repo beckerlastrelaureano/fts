@@ -903,7 +903,16 @@ const App = (() => {
     inputDni.addEventListener('keydown', (e) => { if (e.key === 'Enter') buscar(); });
 
     const inputFecha = $('#input-fecha-asistencias');
-    const hoyISO = new Date().toISOString().slice(0, 10);
+    // Ojo acá: toISOString() da la fecha en UTC, que en Argentina puede
+    // quedar un día adelantada a la tarde/noche (UTC-3) — por eso se
+    // arma la fecha con los componentes locales, no con toISOString().
+    function fechaLocalISO(d = new Date()) {
+      const anio = d.getFullYear();
+      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const dia = String(d.getDate()).padStart(2, '0');
+      return `${anio}-${mes}-${dia}`;
+    }
+    const hoyISO = fechaLocalISO();
     inputFecha.value = hoyISO;
 
     async function cargarAsistenciasDeHoy() {
@@ -1230,15 +1239,11 @@ const App = (() => {
 
   async function renderAgendaPilates() {
     const cont = $('#view-agenda-pilates');
-    let profeActivo = 'male';
+    const DIAS_COLUMNAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 
     cont.innerHTML = `
       <div class="panel-header-flex"><h2>${icon('calendar')} Agenda de Pilates</h2><button class="btn btn-fantasma btn-sm" id="btn-importar-pilates">${icon('routine')} Importar datos del Excel</button></div>
-      <div class="filtros-chips" id="tabs-profe-pilates" style="margin:1rem 0 1.2rem">
-        ${Object.entries(PROFES_PILATES).map(([k, nombre]) => `<button type="button" class="chip ${k === profeActivo ? 'chip-activo' : ''}" data-profe-pilates="${k}">${escapeHtml(nombre)}</button>`).join('')}
-      </div>
-      <button class="btn btn-primario btn-sm" id="btn-nuevo-turno-pilates" style="margin-bottom:1rem">${icon('plus')} Agregar turno</button>
-      <div id="grilla-pilates"><p class="texto-suave">Cargando...</p></div>
+      <div id="tablas-pilates"><p class="texto-suave">Cargando...</p></div>
     `;
 
     $('#btn-importar-pilates').addEventListener('click', async () => {
@@ -1248,20 +1253,14 @@ const App = (() => {
       cargar();
     });
 
-    $$('#tabs-profe-pilates [data-profe-pilates]').forEach(b => b.addEventListener('click', () => {
-      profeActivo = b.dataset.profePilates;
-      $$('#tabs-profe-pilates [data-profe-pilates]').forEach(bb => bb.classList.toggle('chip-activo', bb.dataset.profePilates === profeActivo));
-      cargar();
-    }));
-
-    $('#btn-nuevo-turno-pilates').addEventListener('click', () => {
+    async function abrirModalTurno(profe, diaSugerido, horarioSugerido) {
       abrirModal(`
-        <div class="modal-header"><h3>${icon('plus')} Nuevo turno — ${escapeHtml(PROFES_PILATES[profeActivo])}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
+        <div class="modal-header"><h3>${icon('plus')} Nuevo turno — ${escapeHtml(PROFES_PILATES[profe])}</h3><button data-cerrar-modal class="btn-icono">${icon('close')}</button></div>
         <div class="modal-body">
           <label class="campo"><span>Día</span>
-            <select id="input-dia-turno">${Object.entries(DIAS_PILATES).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select>
+            <select id="input-dia-turno">${DIAS_COLUMNAS.map(k => `<option value="${k}" ${k === diaSugerido ? 'selected' : ''}>${DIAS_PILATES[k]}</option>`).join('')}</select>
           </label>
-          <label class="campo"><span>Horario</span><input type="time" id="input-horario-turno" value="09:00"></label>
+          <label class="campo"><span>Horario</span><input type="time" id="input-horario-turno" value="${horarioSugerido || '09:00'}"></label>
           <label class="campo"><span>Cupo máximo</span><input type="number" id="input-cupo-turno" min="1" max="20" value="4"></label>
         </div>
         <div class="modal-footer">
@@ -1270,48 +1269,68 @@ const App = (() => {
         </div>`, { id: 'modal-nuevo-turno-pilates' });
       $('#btn-guardar-turno').addEventListener('click', async () => {
         await FirebaseService.crearClasePilates({
-          profe: profeActivo, dia: $('#input-dia-turno').value,
+          profe, dia: $('#input-dia-turno').value,
           horario: $('#input-horario-turno').value, cupoMaximo: Number($('#input-cupo-turno').value) || 4
         });
         cerrarModal();
         toast('Turno creado.', 'exito');
         cargar();
       });
-    });
+    }
 
     async function cargar() {
-      const cont2 = $('#grilla-pilates');
+      const cont2 = $('#tablas-pilates');
       cont2.innerHTML = `<p class="texto-suave">Cargando...</p>`;
       const todas = await FirebaseService.listarClasesPilates();
-      const deEsteProfe = todas.filter(c => c.profe === profeActivo).sort((a, b) => a.horario.localeCompare(b.horario));
 
-      if (!deEsteProfe.length) {
-        cont2.innerHTML = `<div class="estado-vacio"><p>${icon('calendar')} ${escapeHtml(PROFES_PILATES[profeActivo])} todavía no tiene turnos cargados.</p></div>`;
-        return;
-      }
+      cont2.innerHTML = Object.entries(PROFES_PILATES).map(([profeKey, profeNombre]) => {
+        const deEsteProfe = todas.filter(c => c.profe === profeKey);
+        const horarios = [...new Set(deEsteProfe.map(c => c.horario))].sort();
+        const diasConDatos = DIAS_COLUMNAS.filter(d => deEsteProfe.some(c => c.dia === d));
+        const columnas = diasConDatos.length ? diasConDatos : DIAS_COLUMNAS.slice(0, 5);
 
-      cont2.innerHTML = deEsteProfe.map(c => `
-        <div class="bloque-dia" data-turno-id="${c.id}">
-          <div class="dia-header">
-            <strong>${DIAS_PILATES[c.dia] || c.dia} · ${escapeHtml(c.horario)}</strong>
-            <span class="texto-suave texto-pequeno" style="margin-left:.6rem">${(c.alumnos || []).length}/${c.cupoMaximo || 4}</span>
-            <div style="margin-left:auto;display:flex;gap:.4rem">
-              <button class="btn btn-fantasma btn-sm" data-agregar-alumno-pilates="${c.id}">${icon('plus')} Anotar</button>
-              <button class="btn-icono btn-icono-peligro" data-borrar-turno-pilates="${c.id}" title="Borrar turno">${icon('trash')}</button>
-            </div>
+        if (!horarios.length) {
+          return `<div class="panel" style="margin-bottom:1.4rem">
+            <h3>${escapeHtml(profeNombre)}</h3>
+            <p class="texto-suave estado-vacio">Todavía no tiene turnos cargados.</p>
+            <button class="btn btn-fantasma btn-sm" data-crear-primer-turno="${profeKey}" style="margin-top:.6rem">${icon('plus')} Agregar turno</button>
+          </div>`;
+        }
+
+        return `
+        <div class="panel" style="margin-bottom:1.4rem">
+          <div class="panel-header-flex"><h3>${escapeHtml(profeNombre)}</h3><button class="btn btn-fantasma btn-sm" data-crear-primer-turno="${profeKey}">${icon('plus')} Agregar turno</button></div>
+          <div class="tabla-records-wrap">
+            <table class="tabla-pilates">
+              <thead><tr><th>Horario</th>${columnas.map(d => `<th>${DIAS_PILATES[d]}</th>`).join('')}</tr></thead>
+              <tbody>
+                ${horarios.map(h => `
+                  <tr>
+                    <td><strong>${escapeHtml(h)}</strong></td>
+                    ${columnas.map(d => {
+                      const turno = deEsteProfe.find(c => c.dia === d && c.horario === h);
+                      if (!turno) return `<td><button class="btn-icono" data-crear-turno-celda="${profeKey}:${d}:${h}" title="Crear turno acá">${icon('plus')}</button></td>`;
+                      const alumnos = turno.alumnos || [];
+                      return `<td class="celda-pilates">
+                        ${alumnos.map((nombre, i) => `<div class="celda-pilates-alumno"><span>${escapeHtml(nombre)}</span><button class="btn-icono" data-editar-alumno-pilates="${turno.id}:${i}" title="Editar">${icon('edit')}</button><button class="btn-icono btn-icono-peligro" data-quitar-alumno-pilates="${turno.id}:${i}" title="Sacar">${icon('close')}</button></div>`).join('')}
+                        <div class="celda-pilates-acciones">
+                          <button class="btn-icono" data-agregar-alumno-pilates="${turno.id}" title="Anotar">${icon('plus')}</button>
+                          <button class="btn-icono btn-icono-peligro" data-borrar-turno-pilates="${turno.id}" title="Borrar turno">${icon('trash')}</button>
+                        </div>
+                      </td>`;
+                    }).join('')}
+                  </tr>`).join('')}
+              </tbody>
+            </table>
           </div>
-          <div class="lista-ejercicios-dia">
-            ${(c.alumnos || []).length ? c.alumnos.map((nombre, i) => `
-              <div class="fila-ejercicio-dia">
-                <div class="fila-ejercicio-dia-icono">${icon('routine')}</div>
-                <div class="fila-ejercicio-dia-info"><strong>${escapeHtml(nombre)}</strong></div>
-                <div class="fila-ejercicio-dia-acciones">
-                  <button class="btn-icono" data-editar-alumno-pilates="${c.id}:${i}" title="Editar nombre">${icon('edit')}</button>
-                  <button class="btn-icono btn-icono-peligro" data-quitar-alumno-pilates="${c.id}:${i}">${icon('close')}</button>
-                </div>
-              </div>`).join('') : '<p class="texto-suave texto-pequeno">Sin nadie anotado todavía.</p>'}
-          </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
+
+      $$('[data-crear-primer-turno]', cont2).forEach(b => b.addEventListener('click', () => abrirModalTurno(b.dataset.crearPrimerTurno)));
+      $$('[data-crear-turno-celda]', cont2).forEach(b => b.addEventListener('click', () => {
+        const [profe, dia, horario] = b.dataset.crearTurnoCelda.split(':');
+        abrirModalTurno(profe, dia, horario);
+      }));
 
       $$('[data-borrar-turno-pilates]', cont2).forEach(b => b.addEventListener('click', async () => {
         if (!confirm('¿Borrar este turno completo, con todos los anotados?')) return;
@@ -1320,37 +1339,32 @@ const App = (() => {
         cargar();
       }));
 
-      $$('[data-agregar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', () => {
-        const turno = deEsteProfe.find(c => c.id === b.dataset.agregarAlumnoPilates);
+      $$('[data-agregar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', async () => {
+        const turno = todas.find(c => c.id === b.dataset.agregarAlumnoPilates);
         const nombre = prompt('Nombre del alumno a anotar:');
         if (!nombre || !nombre.trim()) return;
-        if ((turno.alumnos || []).length >= (turno.cupoMaximo || 4)) {
-          if (!confirm('Este turno ya está en su cupo máximo. ¿Anotarlo igual?')) return;
-        }
+        if ((turno.alumnos || []).length >= (turno.cupoMaximo || 4) && !confirm('Este turno ya está en su cupo máximo. ¿Anotarlo igual?')) return;
         const nuevaLista = [...(turno.alumnos || []), nombre.trim()];
-        FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista).catch(() => toast('No se pudo guardar.', 'error'));
-        turno.alumnos = nuevaLista;
+        await FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista);
         cargar();
       }));
 
-      $$('[data-editar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', () => {
+      $$('[data-editar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', async () => {
         const [turnoId, idx] = b.dataset.editarAlumnoPilates.split(':');
-        const turno = deEsteProfe.find(c => c.id === turnoId);
+        const turno = todas.find(c => c.id === turnoId);
         const nuevoNombre = prompt('Editar nombre:', turno.alumnos[Number(idx)]);
         if (nuevoNombre === null || !nuevoNombre.trim()) return;
         const nuevaLista = [...turno.alumnos];
         nuevaLista[Number(idx)] = nuevoNombre.trim();
-        FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista).catch(() => toast('No se pudo guardar.', 'error'));
-        turno.alumnos = nuevaLista;
+        await FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista);
         cargar();
       }));
 
-      $$('[data-quitar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', () => {
+      $$('[data-quitar-alumno-pilates]', cont2).forEach(b => b.addEventListener('click', async () => {
         const [turnoId, idx] = b.dataset.quitarAlumnoPilates.split(':');
-        const turno = deEsteProfe.find(c => c.id === turnoId);
+        const turno = todas.find(c => c.id === turnoId);
         const nuevaLista = turno.alumnos.filter((_, i) => i !== Number(idx));
-        FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista).catch(() => toast('No se pudo guardar.', 'error'));
-        turno.alumnos = nuevaLista;
+        await FirebaseService.actualizarAlumnosClasePilates(turno.id, nuevaLista);
         cargar();
       }));
     }

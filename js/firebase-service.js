@@ -453,8 +453,12 @@ const FirebaseService = (() => {
   }
 
   async function getAsistenciasDeFecha(fechaISO) {
-    const inicio = new Date(fechaISO); inicio.setHours(0, 0, 0, 0);
-    const fin = new Date(fechaISO); fin.setHours(23, 59, 59, 999);
+    // new Date("YYYY-MM-DD") lo interpreta como medianoche UTC, que en
+    // Argentina (UTC-3) cae en el día anterior a la tarde/noche. Por eso
+    // se arma la fecha a mano con los componentes, en hora local.
+    const [anio, mes, dia] = fechaISO.split('-').map(Number);
+    const inicio = new Date(anio, mes - 1, dia, 0, 0, 0, 0);
+    const fin = new Date(anio, mes - 1, dia, 23, 59, 59, 999);
     const todas = await getTodasLasAsistencias();
     return todas.filter(a => {
       const t = new Date(a.fecha).getTime();

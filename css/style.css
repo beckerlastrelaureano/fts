@@ -591,3 +591,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .kiosco-mensaje-exito { color: var(--color-exito); font-size: 1.3rem; font-weight: 700; }
 .kiosco-mensaje-error { color: #E05B5B; font-size: 1rem; }
 .kiosco-salir { position: fixed; top: 1rem; right: 1rem; opacity: .5; }
+
+/* --------------------------------- Agenda de Pilates (tabla) --------------------------------- */
+.tabla-pilates { border-collapse: collapse; width: 100%; min-width: 640px; }
+.tabla-pilates th, .tabla-pilates td { border: 1px solid var(--color-borde-suave); padding: .5rem; text-align: left; vertical-align: top; font-size: .85rem; }
+.tabla-pilates th { background: var(--color-fondo-elevado); white-space: nowrap; }
+.celda-pilates { min-width: 140px; }
+.celda-pilates-alumno { display: flex; align-items: center; justify-content: space-between; gap: .3rem; padding: .15rem 0; }
+.celda-pilates-alumno span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.celda-pilates-acciones { display: flex; gap: .3rem; margin-top: .3rem; border-top: 1px dashed var(--color-borde-suave); padding-top: .3rem; }
